@@ -1,0 +1,8 @@
+{
+  "id": "LoF5nCfl7qEAhwLf",
+  "name": "WF-06 Proxy de Imagen",
+  "active": true,
+  "nodeCount": 3,
+  "updatedAt": "2026-04-05T16:50:41.701Z",
+  "description": "Webhook proxy para servir imagenes de Telegram"
+}
