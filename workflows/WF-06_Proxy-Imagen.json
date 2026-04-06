@@ -2,7 +2,32 @@
   "id": "LoF5nCfl7qEAhwLf",
   "name": "WF-06 Proxy de Imagen",
   "active": true,
-  "nodeCount": 3,
+  "description": "Webhook proxy que sirve imagenes de Telegram via URL publica",
   "updatedAt": "2026-04-05T16:50:41.701Z",
-  "description": "Webhook proxy para servir imagenes de Telegram"
+  "nodes": [
+    {
+      "id": "proxy-n1",
+      "name": "Webhook GET imagen",
+      "type": "n8n-nodes-base.webhook",
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "img-proxy",
+        "responseMode": "responseNode"
+      }
+    },
+    {
+      "id": "proxy-n2",
+      "name": "Descargar imagen Telegram",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'https://api.telegram.org/file/TELEGRAM_BOT_TOKEN_REDACTED/' + $json.query.file_path }}"
+      }
+    },
+    {
+      "id": "proxy-n3",
+      "name": "Responder con imagen binaria",
+      "type": "n8n-nodes-base.respondToWebhook"
+    }
+  ]
 }
