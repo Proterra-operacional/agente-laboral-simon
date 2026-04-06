@@ -1,0 +1,1184 @@
+{
+  "updatedAt": "2026-04-06T22:12:18.465Z",
+  "createdAt": "2026-03-31T02:08:39.727Z",
+  "id": "Tf1MIWqHpQ9NKZpa",
+  "name": "WF-04 Email Manual con Aprobación",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "id": "wf4-trigger",
+      "name": "Telegram: Email Manual",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        304
+      ],
+      "parameters": {
+        "updates": [
+          "message",
+          "callback_query"
+        ],
+        "additionalFields": {}
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "rE6bL40aCajtjgBJ",
+          "name": "Telegram Bot - SMR Job Agent"
+        }
+      },
+      "webhookId": "e93e1b5b-e114-4e95-be66-839d011a1fad"
+    },
+    {
+      "id": "wf4-router",
+      "name": "Router tipo mensaje",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        304
+      ],
+      "parameters": {
+        "jsCode": "const u = $input.first().json;\nlet tipo='ignorar', chatId='', texto='', callbackData='', callbackQueryId='';\n\nif (u.callback_query) {\n  tipo = 'callback';\n  chatId = String(u.callback_query.from.id);\n  callbackData = u.callback_query.data || '';\n  callbackQueryId = String(u.callback_query.id);\n} else if (u.message?.text) {\n  chatId = String(u.message.chat.id);\n  texto = u.message.text;\n  const t = texto.toLowerCase().trim();\n  if (t === 'confirmar' || t === 'si' || t === 'sí' || t === 'si enviar' || t === 'yes') {\n    tipo = 'confirmar_texto';\n  } else if (t === 'cancelar' || t === 'no') {\n    tipo = 'cancelar_texto';\n  } else if (/^(aplic|regenera|reescribe|mejora|cambia|corrige)/i.test(t) || t.includes('más profesional') || t.includes('mas profesional') || t.includes('aplícalo') || t.includes('aplicalo')) {\n    tipo = 'feedback';\n  } else if (t.includes('correo') || t.includes('email') || t.includes('redacta') || t.includes('escribe un') || t.startsWith('/email')) {\n    tipo = 'nuevo_email';\n  } else {\n    tipo = 'feedback';\n  }\n}\n\nreturn [{ json: { tipo, chatId, texto, callbackData, callbackQueryId } }];"
+      }
+    },
+    {
+      "id": "wf4-if-callback",
+      "name": "¿Es callback?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        480,
+        304
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.tipo }}",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              },
+              "rightValue": "callback"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "wf4-if-new-email",
+      "name": "¿Es solicitud de email?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        720,
+        480
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "c2",
+              "leftValue": "={{ $json.tipo }}",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              },
+              "rightValue": "nuevo_email"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "wf4-claude",
+      "name": "OpenRouter Redacta Email",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1300,
+        368
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer API_KEY_REDACTED"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'llama-3.3-70b-versatile', max_tokens: 1500, messages: [{ role: 'system', content: 'Eres el asistente de Simón Marín Rojas, Ingeniero Comercial y Analista de Procesos y Automatización (contacto@simonmarin.com | +56 9 8401 3356 | Santiago, Chile). Redactas emails profesionales en su nombre para empresas y reclutadores. Tono: formal, directo, sin frases genéricas. Máximo 4 párrafos. Incluye siempre logros cuantificables cuando corresponda. NO incluyas firma, nombre, ni despedida al final del cuerpo. La plantilla HTML agrega la firma automáticamente. CRÍTICO: El cuerpo del email NUNCA debe terminar con firma, nombre, despedida, ni Atentamente. Termina siempre con la última oración del contenido profesional. La firma es agregada automáticamente por el sistema.' + $('Formatear Memoria').first().json.memoryRules }, { role: 'user', content: 'Solicitud de Simón: ' + $('Router tipo mensaje').first().json.texto + '\\n\\nCRÍTICO: NO incluyas firma, nombre, despedida ni Atentamente al final del cuerpo. La plantilla HTML agrega la firma automáticamente.\\n\\nDevuelve SOLO JSON válido sin markdown: {\"toEmail\": \"email@empresa.com\", \"asunto\": \"asunto profesional\", \"cuerpo\": \"texto del correo sin firma ni despedida al final\"}' }] }) }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "wf4-store-preview",
+      "name": "Guardar Draft y Preparar Preview",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        368
+      ],
+      "parameters": {
+        "jsCode": "const claudeResp = $input.first().json;\nconst chatId = $('Router tipo mensaje').first().json.chatId;\n\nlet toEmail = '', asunto = '', cuerpo = '';\ntry {\n  const content = claudeResp.choices?.[0]?.message?.content || claudeResp.content?.[0]?.text || '';\n  const match = content.match(/\\{[\\s\\S]*\\}/);\n  if (match) {\n    const parsed = JSON.parse(match[0]);\n    toEmail = parsed.toEmail || '';\n    asunto = parsed.asunto || '';\n    cuerpo = parsed.cuerpo || '';\n  }\n} catch(e) {}\n\n// Guardar draft en static data indexado por chatId\nconst sd = $getWorkflowStaticData('global');\nsd['draft_' + chatId] = { toEmail, asunto, cuerpo, ts: Date.now() };\n\nconst previewBody = cuerpo.length > 700 ? cuerpo.substring(0, 700) + '...' : cuerpo;\nconst preview = '📧 *Preview del correo*\\n\\n' +\n  '*Para:* ' + toEmail + '\\n' +\n  '*Asunto:* ' + asunto + '\\n\\n' +\n  '*Cuerpo:*\\n' + previewBody +\n  '\\n\\n——\\n👆 *Usa los botones para confirmar o cancelar*';\n\nreturn [{ json: { chatId, preview, toEmail, asunto, cuerpo } }];"
+      }
+    },
+    {
+      "id": "wf4-send-preview",
+      "name": "Enviar Preview con Botones",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1440,
+        368
+      ],
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "={{ $json.preview }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "Markdown"
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "rE6bL40aCajtjgBJ",
+          "name": "Telegram Bot - SMR Job Agent"
+        }
+      },
+      "webhookId": "0cc50451-a4f5-4a94-ae54-4157385d2862"
+    },
+    {
+      "id": "wf4-if-confirm",
+      "name": "¿Confirmar o Cancelar?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        720,
+        128
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "c3",
+              "leftValue": "={{ $json.callbackData }}",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              },
+              "rightValue": "confirm_email"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "wf4-load-draft",
+      "name": "Cargar Draft Guardado",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const chatId = $('Router tipo mensaje').first().json.chatId;\nconst callbackQueryId = $('Router tipo mensaje').first().json.callbackQueryId;\nconst sd = $getWorkflowStaticData('global');\nconst draft = sd['draft_' + chatId] || {};\n\n// Limpiar draft después de leer\ndelete sd['draft_' + chatId];\n\nreturn [{ json: {\n  chatId,\n  callbackQueryId,\n  toEmail: draft.toEmail || '',\n  asunto: draft.asunto || '',\n  cuerpo: draft.cuerpo || '',\n  hasDraft: !!(draft.toEmail)\n} }];"
+      }
+    },
+    {
+      "id": "wf4-answer-confirm",
+      "name": "Responder Callback Confirmar",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1200,
+        0
+      ],
+      "parameters": {
+        "operation": "answerCallbackQuery"
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "rE6bL40aCajtjgBJ",
+          "name": "Telegram Bot - SMR Job Agent"
+        }
+      },
+      "webhookId": "c3b28400-2a59-447a-bc92-f345da3e3416"
+    },
+    {
+      "id": "wf4-send-email",
+      "name": "Enviar Email Manual",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        1440,
+        0
+      ],
+      "parameters": {
+        "fromEmail": "\"Simón Marín Rojas\" <contacto@simonmarin.com>",
+        "toEmail": "={{ $('Cargar Draft Guardado').first().json.toEmail }}",
+        "subject": "={{ $('Cargar Draft Guardado').first().json.asunto }}",
+        "html": "=<html><head><meta charset=\"UTF-8\"><style>body{margin:0;padding:0;background:#f0f4f8}table{border-collapse:collapse}</style></head><body><center><table width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"max-width:600px;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,.10);margin:20px auto\"><tr><td style=\"background:#0d2137;padding:26px 36px 20px\"><p style=\"margin:0 0 4px;font-family:Georgia,serif;font-size:17pt;font-weight:bold;color:#fff;letter-spacing:1px\">SIMÓN MARÍN ROJAS</p><p style=\"margin:0;font-family:Arial,sans-serif;font-size:9pt;color:#a8c4e0\">Ingeniero Comercial &nbsp;·&nbsp; Analista de Procesos y Automatización</p></td></tr><tr><td style=\"padding:30px 36px 28px;font-family:Georgia,serif;font-size:11pt;color:#1a1a1a;line-height:1.8\">{{ ($('Cargar Draft Guardado').first().json.cuerpo || '').replace(/\\n/g,'<br>') }}</td></tr><tr><td style=\"background:#eef2f7;border-top:1px solid #d0dce8;padding:16px 36px;font-family:Arial,sans-serif;font-size:9pt;color:#4a6a8a\">contacto@simonmarin.com &nbsp;|&nbsp; +56 9 8401 3356 &nbsp;|&nbsp; Santiago, Chile</td></tr></table></center></body></html>",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "smtp": {
+          "id": "PzG1HDuy5xJlmEQ5",
+          "name": "Hostinger SMTP - Simón"
+        }
+      },
+      "webhookId": "74cd6739-44b6-4ce7-85f1-855bc70c1d78"
+    },
+    {
+      "id": "wf4-notify-sent",
+      "name": "Confirmar Email Enviado",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1680,
+        0
+      ],
+      "parameters": {
+        "chatId": "={{ $('Cargar Draft Guardado').first().json.chatId }}",
+        "text": "={{ '✅ *Correo enviado exitosamente*\\n\\n📧 *Para:* ' + $('Cargar Draft Guardado').first().json.toEmail + '\\n📌 *Asunto:* ' + $('Cargar Draft Guardado').first().json.asunto + '\\n\\n_El correo fue enviado desde contacto@simonmarin.com_' }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "Markdown"
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "rE6bL40aCajtjgBJ",
+          "name": "Telegram Bot - SMR Job Agent"
+        }
+      },
+      "webhookId": "b7890604-0bbf-4ee5-8c93-e025973c2da6"
+    },
+    {
+      "id": "wf4-answer-cancel",
+      "name": "Responder Callback Cancelar",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        960,
+        240
+      ],
+      "parameters": {
+        "operation": "answerCallbackQuery"
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "rE6bL40aCajtjgBJ",
+          "name": "Telegram Bot - SMR Job Agent"
+        }
+      },
+      "webhookId": "cf9b70c8-a7ec-427f-a314-8f6c9eb54ebb"
+    },
+    {
+      "id": "wf4-notify-cancel",
+      "name": "Notificar Cancelación",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1200,
+        240
+      ],
+      "parameters": {
+        "chatId": "={{ $('Router tipo mensaje').first().json.chatId }}",
+        "text": "❌ Correo cancelado. Para redactar uno nuevo, dime a qué dirección y el contexto.",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "rE6bL40aCajtjgBJ",
+          "name": "Telegram Bot - SMR Job Agent"
+        }
+      },
+      "webhookId": "dfbcfceb-4782-44dc-8a13-038adcfaec65"
+    },
+    {
+      "id": "wf4-fallback-msg",
+      "name": "Verificar Draft Pendiente",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        640
+      ],
+      "parameters": {
+        "chatId": "={{ $('Router tipo mensaje').first().json.chatId }}",
+        "text": "✅ Anotado. Aplicaré esta instrucción en los próximos correos.",
+        "additionalFields": {
+          "appendAttribution": false
+        },
+        "jsCode": "const chatId = $('Router tipo mensaje').first().json.chatId;\nconst feedbackText = $('Router tipo mensaje').first().json.texto;\n\nconst sd = $getWorkflowStaticData('global');\nconst draft = sd['draft_' + chatId] || null;\nconst hasDraft = !!(draft && draft.toEmail && draft.cuerpo);\n\nreturn [{ json: { hasDraft, draft: draft || {}, feedbackText, chatId } }];"
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "rE6bL40aCajtjgBJ",
+          "name": "Telegram Bot - SMR Job Agent"
+        }
+      },
+      "webhookId": "abae8048-1304-4d7a-8da8-6b424109d4c6"
+    },
+    {
+      "id": "wf4-if-text-confirm",
+      "name": "¿Confirmación por texto?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        720,
+        512
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "combinator": "or",
+          "conditions": [
+            {
+              "id": "tc1",
+              "leftValue": "={{ $json.tipo }}",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              },
+              "rightValue": "confirmar_texto"
+            },
+            {
+              "id": "tc2",
+              "leftValue": "={{ $json.tipo }}",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              },
+              "rightValue": "cancelar_texto"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "wf4-if-text-type",
+      "name": "¿Confirmar o Cancelar Texto?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        960,
+        496
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "tcc1",
+              "leftValue": "={{ $json.tipo }}",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              },
+              "rightValue": "confirmar_texto"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "wf4-load-draft-text",
+      "name": "Cargar Draft (texto)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        304
+      ],
+      "parameters": {
+        "jsCode": "const chatId = $('Router tipo mensaje').first().json.chatId;\nconst sd = $getWorkflowStaticData('global');\nconst draft = sd['draft_' + chatId] || {};\ndelete sd['draft_' + chatId];\nreturn [{ json: { chatId, callbackQueryId: '', toEmail: draft.toEmail || '', asunto: draft.asunto || '', cuerpo: draft.cuerpo || '', hasDraft: !!(draft.toEmail) } }];"
+      }
+    },
+    {
+      "id": "wf4-send-email-text",
+      "name": "Enviar Email (texto)",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        1440,
+        304
+      ],
+      "parameters": {
+        "fromEmail": "\"Simón Marín Rojas\" <contacto@simonmarin.com>",
+        "toEmail": "={{ $('Cargar Draft (texto)').first().json.toEmail }}",
+        "subject": "={{ $('Cargar Draft (texto)').first().json.asunto }}",
+        "html": "=<html><head><meta charset=\"UTF-8\"><style>body{margin:0;padding:0;background:#f0f4f8}table{border-collapse:collapse}</style></head><body><center><table width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"max-width:600px;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,.10);margin:20px auto\"><tr><td style=\"background:#0d2137;padding:26px 36px 20px\"><p style=\"margin:0 0 4px;font-family:Georgia,serif;font-size:17pt;font-weight:bold;color:#fff;letter-spacing:1px\">SIMÓN MARÍN ROJAS</p><p style=\"margin:0;font-family:Arial,sans-serif;font-size:9pt;color:#a8c4e0\">Ingeniero Comercial &nbsp;·&nbsp; Analista de Procesos y Automatización</p></td></tr><tr><td style=\"padding:30px 36px 28px;font-family:Georgia,serif;font-size:11pt;color:#1a1a1a;line-height:1.8\">{{ ($('Cargar Draft (texto)').first().json.cuerpo || '').replace(/\\n/g,'<br>') }}</td></tr><tr><td style=\"background:#eef2f7;border-top:1px solid #d0dce8;padding:16px 36px;font-family:Arial,sans-serif;font-size:9pt;color:#4a6a8a\">contacto@simonmarin.com &nbsp;|&nbsp; +56 9 8401 3356 &nbsp;|&nbsp; Santiago, Chile</td></tr></table></center></body></html>",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "smtp": {
+          "id": "PzG1HDuy5xJlmEQ5",
+          "name": "Hostinger SMTP - Simón"
+        }
+      },
+      "webhookId": "157970d8-9a39-45e1-97fc-d14f7bfe5f9f"
+    },
+    {
+      "id": "wf4-notify-sent-text",
+      "name": "Confirmar Email Enviado (texto)",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1680,
+        304
+      ],
+      "parameters": {
+        "chatId": "={{ $('Cargar Draft (texto)').first().json.chatId }}",
+        "text": "={{ '✅ *Correo enviado exitosamente*\\n\\n📧 *Para:* ' + $('Cargar Draft (texto)').first().json.toEmail + '\\n📌 *Asunto:* ' + $('Cargar Draft (texto)').first().json.asunto + '\\n\\n_El correo fue enviado desde contacto@simonmarin.com_' }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "Markdown"
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "rE6bL40aCajtjgBJ",
+          "name": "Telegram Bot - SMR Job Agent"
+        }
+      },
+      "webhookId": "d5b92a48-348b-4f84-8756-cc6538756eb4"
+    },
+    {
+      "id": "wf4-notify-cancel-text",
+      "name": "Notificar Cancelación (texto)",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1200,
+        464
+      ],
+      "parameters": {
+        "chatId": "={{ $('Router tipo mensaje').first().json.chatId }}",
+        "text": "❌ Correo cancelado. Para redactar uno nuevo, dime a qué dirección y el contexto.",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "rE6bL40aCajtjgBJ",
+          "name": "Telegram Bot - SMR Job Agent"
+        }
+      },
+      "webhookId": "4fa08c27-1aae-4952-8bb7-219ce83ad38c"
+    },
+    {
+      "id": "wf4-leer-memoria",
+      "name": "Leer Memoria Agente",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        900,
+        368
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/databases/3313b76e-193b-8006-aa1c-edfcd7846e5b/query",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"filter\": {\"property\": \"Activo\", \"checkbox\": {\"equals\": true}}}",
+        "options": {},
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "notionApi",
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "{\"filter\":{\"property\":\"Activo\",\"checkbox\":{\"equals\":true}}}"
+      },
+      "credentials": {
+        "notionApi": {
+          "id": "jYJowf8nddngCyk0",
+          "name": "Notion - Agente Laboral"
+        }
+      }
+    },
+    {
+      "id": "wf4-formatear-memoria",
+      "name": "Formatear Memoria",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        368
+      ],
+      "parameters": {
+        "jsCode": "const pages = $input.all();\nif (pages.length === 0 || !pages[0].json.results) return [{ json: { memoryRules: '' } }];\n\nconst rules = pages[0].json.results.map(p => {\n  const nota = p.properties?.Nota?.rich_text?.[0]?.plain_text || '';\n  return nota;\n}).filter(Boolean).join('\\n- ');\n\nreturn [{ json: { memoryRules: rules ? `\\n\\nREGLAS DE MEMORIA:\\n- ${rules}` : '' } }];"
+      }
+    },
+    {
+      "id": "wf4-if-has-draft",
+      "name": "¿Hay draft pendiente?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1160,
+        640
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "hd1",
+              "leftValue": "={{ Boolean($json.hasDraft) }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              },
+              "rightValue": ""
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "wf4-prep-regen",
+      "name": "Preparar Regeneración",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1360,
+        560
+      ],
+      "parameters": {
+        "jsCode": "const { draft, feedbackText, chatId } = $input.first().json;\n\nconst userPrompt = 'Regenera este email aplicando este cambio: ' + feedbackText + '\\n\\nEmail actual:\\n' +\n  'Para: ' + draft.toEmail + '\\n' +\n  'Asunto: ' + draft.asunto + '\\n' +\n  'Cuerpo: ' + draft.cuerpo + '\\n\\n' +\n  'CRÍTICO: NO incluyas firma, nombre, despedida ni Atentamente al final del cuerpo. La plantilla HTML agrega la firma automáticamente.\\n\\n' +\n  'Devuelve SOLO JSON válido sin markdown: {\"toEmail\": \"email@empresa.com\", \"asunto\": \"asunto profesional\", \"cuerpo\": \"texto del correo sin firma ni despedida al final\"}';\n\nreturn [{ json: { chatId, feedbackText, originalDraft: draft, userPrompt } }];"
+      }
+    },
+    {
+      "id": "wf4-groq-regen",
+      "name": "Groq Regenera Email",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1560,
+        560
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer API_KEY_REDACTED"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'llama-3.3-70b-versatile', max_tokens: 1500, messages: [{ role: 'system', content: 'Eres el asistente de Simón Marín Rojas, Ingeniero Comercial y Analista de Procesos y Automatización (contacto@simonmarin.com | +56 9 8401 3356 | Santiago, Chile). Redactas emails profesionales en su nombre para empresas y reclutadores. Tono: formal, directo, sin frases genéricas. Máximo 4 párrafos. CRÍTICO: El cuerpo del email NUNCA debe terminar con firma, nombre, despedida, ni Atentamente. La firma es agregada automáticamente por el sistema.' }, { role: 'user', content: $('Preparar Regeneración').first().json.userPrompt }] }) }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "wf4-parse-regen",
+      "name": "Parsear Email Regenerado",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        560
+      ],
+      "parameters": {
+        "jsCode": "const resp = $input.first().json;\nconst chatId = $('Preparar Regeneración').first().json.chatId;\nconst feedbackText = $('Preparar Regeneración').first().json.feedbackText;\n\nlet toEmail = '', asunto = '', cuerpo = '';\ntry {\n  const content = resp.choices?.[0]?.message?.content || resp.content?.[0]?.text || '';\n  const match = content.match(/\\{[\\s\\S]*\\}/);\n  if (match) {\n    const parsed = JSON.parse(match[0]);\n    toEmail = parsed.toEmail || '';\n    asunto = parsed.asunto || '';\n    cuerpo = parsed.cuerpo || '';\n  }\n} catch(e) {}\n\nreturn [{ json: { chatId, toEmail, asunto, cuerpo, feedbackText } }];"
+      }
+    },
+    {
+      "id": "wf4-save-regen",
+      "name": "Guardar Draft Regenerado",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1960,
+        560
+      ],
+      "parameters": {
+        "jsCode": "const { chatId, toEmail, asunto, cuerpo } = $input.first().json;\n\nconst sd = $getWorkflowStaticData('global');\nsd['draft_' + chatId] = { toEmail, asunto, cuerpo, ts: Date.now() };\n\nconst previewBody = cuerpo.length > 700 ? cuerpo.substring(0, 700) + '...' : cuerpo;\nconst preview = '✏️ *Correo actualizado:*\\n\\n' +\n  '*Para:* ' + toEmail + '\\n' +\n  '*Asunto:* ' + asunto + '\\n\\n' +\n  '*Cuerpo:*\\n' + previewBody +\n  '\\n\\n——\\n👆 *Usa los botones para confirmar o cancelar*';\n\nreturn [{ json: { chatId, preview, toEmail, asunto, cuerpo } }];"
+      }
+    },
+    {
+      "id": "wf4-send-regen-preview",
+      "name": "Enviar Preview Regenerado",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2160,
+        560
+      ],
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "={{ $json.preview }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "Markdown",
+          "reply_markup": "{\"inline_keyboard\":[[{\"text\":\"✅ Confirmar y Enviar\",\"callback_data\":\"confirmar\"},{\"text\":\"❌ Cancelar\",\"callback_data\":\"cancelar\"}]]}"
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "rE6bL40aCajtjgBJ",
+          "name": "Telegram Bot - SMR Job Agent"
+        }
+      },
+      "webhookId": "73331e94-8d02-4c91-92dd-6f591a551583"
+    },
+    {
+      "id": "wf4-save-feedback-notion",
+      "name": "Guardar Feedback Notion",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2360,
+        560
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/pages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ parent: { database_id: '3313b76e-193b-8006-aa1c-edfcd7846e5b' }, properties: { Nombre: { title: [{ text: { content: ('Feedback: ' + $('Parsear Email Regenerado').first().json.feedbackText).substring(0, 80) } }] }, Nota: { rich_text: [{ text: { content: 'Feedback aplicado: ' + $('Parsear Email Regenerado').first().json.feedbackText + '\\nAsunto regenerado: ' + $('Parsear Email Regenerado').first().json.asunto } }] }, Activo: { checkbox: true }, Fecha: { date: { start: $now.format('yyyy-MM-dd') } }, Sección: { select: { name: 'Notas de Comportamiento' } } } }) }}",
+        "options": {},
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "notionApi"
+      },
+      "credentials": {
+        "notionApi": {
+          "id": "jYJowf8nddngCyk0",
+          "name": "Notion - Agente Laboral"
+        }
+      }
+    },
+    {
+      "id": "wf4-save-instruccion-notion",
+      "name": "Guardar Instrucción Notion",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1360,
+        760
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/pages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ parent: { database_id: '3313b76e-193b-8006-aa1c-edfcd7846e5b' }, properties: { Nombre: { title: [{ text: { content: ('Instrucción: ' + $('Verificar Draft Pendiente').first().json.feedbackText).substring(0, 80) } }] }, Nota: { rich_text: [{ text: { content: 'Instrucción para próximos correos: ' + $('Verificar Draft Pendiente').first().json.feedbackText } }] }, Activo: { checkbox: true }, Fecha: { date: { start: $now.format('yyyy-MM-dd') } }, Sección: { select: { name: 'Instrucciones' } } } }) }}",
+        "options": {},
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "notionApi"
+      },
+      "credentials": {
+        "notionApi": {
+          "id": "jYJowf8nddngCyk0",
+          "name": "Notion - Agente Laboral"
+        }
+      }
+    },
+    {
+      "id": "wf4-confirm-guardado",
+      "name": "Confirmar Guardado",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1560,
+        760
+      ],
+      "parameters": {
+        "chatId": "={{ $('Verificar Draft Pendiente').first().json.chatId }}",
+        "text": "✅ Guardado en memoria. Lo aplicaré en el próximo correo que genere.",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "rE6bL40aCajtjgBJ",
+          "name": "Telegram Bot - SMR Job Agent"
+        }
+      },
+      "webhookId": "27226e8f-388b-458d-93d4-c0bb47055a4a"
+    }
+  ],
+  "connections": {
+    "Telegram: Email Manual": {
+      "main": [
+        [
+          {
+            "node": "Router tipo mensaje",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Router tipo mensaje": {
+      "main": [
+        [
+          {
+            "node": "¿Es callback?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Es callback?": {
+      "main": [
+        [
+          {
+            "node": "¿Confirmar o Cancelar?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "¿Confirmación por texto?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Confirmación por texto?": {
+      "main": [
+        [
+          {
+            "node": "¿Confirmar o Cancelar Texto?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "¿Es solicitud de email?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Es solicitud de email?": {
+      "main": [
+        [
+          {
+            "node": "Leer Memoria Agente",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Verificar Draft Pendiente",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Verificar Draft Pendiente",
+            "type": "0",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenRouter Redacta Email": {
+      "main": [
+        [
+          {
+            "node": "Guardar Draft y Preparar Preview",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guardar Draft y Preparar Preview": {
+      "main": [
+        [
+          {
+            "node": "Enviar Preview con Botones",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Confirmar o Cancelar?": {
+      "main": [
+        [
+          {
+            "node": "Cargar Draft Guardado",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Responder Callback Cancelar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cargar Draft Guardado": {
+      "main": [
+        [
+          {
+            "node": "Responder Callback Confirmar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Responder Callback Confirmar": {
+      "main": [
+        [
+          {
+            "node": "Enviar Email Manual",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enviar Email Manual": {
+      "main": [
+        [
+          {
+            "node": "Confirmar Email Enviado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Responder Callback Cancelar": {
+      "main": [
+        [
+          {
+            "node": "Notificar Cancelación",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Confirmar o Cancelar Texto?": {
+      "main": [
+        [
+          {
+            "node": "Cargar Draft (texto)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Notificar Cancelación (texto)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cargar Draft (texto)": {
+      "main": [
+        [
+          {
+            "node": "Enviar Email (texto)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enviar Email (texto)": {
+      "main": [
+        [
+          {
+            "node": "Confirmar Email Enviado (texto)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Leer Memoria Agente": {
+      "main": [
+        [
+          {
+            "node": "Formatear Memoria",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Formatear Memoria": {
+      "main": [
+        [
+          {
+            "node": "OpenRouter Redacta Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Hay draft pendiente?": {
+      "main": [
+        [
+          {
+            "node": "Preparar Regeneración",
+            "type": "0",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Guardar Instrucción Notion",
+            "type": "0",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar Regeneración": {
+      "main": [
+        [
+          {
+            "node": "Groq Regenera Email",
+            "type": "0",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq Regenera Email": {
+      "main": [
+        [
+          {
+            "node": "Parsear Email Regenerado",
+            "type": "0",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parsear Email Regenerado": {
+      "main": [
+        [
+          {
+            "node": "Guardar Draft Regenerado",
+            "type": "0",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guardar Draft Regenerado": {
+      "main": [
+        [
+          {
+            "node": "Enviar Preview Regenerado",
+            "type": "0",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enviar Preview Regenerado": {
+      "main": [
+        [
+          {
+            "node": "Guardar Feedback Notion",
+            "type": "0",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guardar Instrucción Notion": {
+      "main": [
+        [
+          {
+            "node": "Confirmar Guardado",
+            "type": "0",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verificar Draft Pendiente": {
+      "main": [
+        [
+          {
+            "node": "¿Hay draft pendiente?",
+            "type": "0",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Santiago",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false,
+    "binaryMode": "separate",
+    "errorWorkflow": "I3orjxloJLGwQYj4"
+  },
+  "staticData": {
+    "global": {}
+  },
+  "meta": null,
+  "pinData": {
+    "Telegram: Email Manual": [
+      {
+        "json": {
+          "update_id": 664911304,
+          "message": {
+            "message_id": 395,
+            "from": {
+              "id": 8298437242,
+              "is_bot": false,
+              "first_name": "Proterra",
+              "last_name": "Atiende",
+              "language_code": "es"
+            },
+            "chat": {
+              "id": 8298437242,
+              "first_name": "Proterra",
+              "last_name": "Atiende",
+              "type": "private"
+            },
+            "date": 1775497727,
+            "text": "envía un correo de presentación a simon.ariel2099@gmail.com",
+            "entities": [
+              {
+                "offset": 34,
+                "length": 25,
+                "type": "email"
+              }
+            ]
+          }
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ]
+  },
+  "versionId": "de9afc41-4827-4d9a-9700-9eee03121c3b",
+  "activeVersionId": "de9afc41-4827-4d9a-9700-9eee03121c3b",
+  "versionCounter": 92,
+  "triggerCount": 1,
+  "tags": []
+}
