@@ -2,7 +2,57 @@
   "id": "KAXHj5q99YyM2b2w",
   "name": "WF-05 Seguimiento Semanal",
   "active": true,
-  "nodeCount": 4,
+  "description": "Reporte semanal de postulaciones - Trigger jueves 10:00 AM, consulta Notion, genera reporte y envia via Telegram",
   "updatedAt": "2026-04-05T16:50:40.376Z",
-  "description": "Reporte semanal de postulaciones cada jueves 10:00 AM via Telegram"
+  "nodes": [
+    {
+      "id": "wf4-n1",
+      "name": "Trigger jueves 10:00 AM",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 10 * * 4"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "wf4-n2",
+      "name": "Consultar Notion",
+      "type": "n8n-nodes-base.notion",
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "getAll",
+        "databaseId": {
+          "value": "NOTION_DB_ID_REDACTED",
+          "mode": "id"
+        },
+        "limit": 100
+      },
+      "credentials": {
+        "notionApi": {
+          "name": "Notion - Agente Laboral"
+        }
+      }
+    },
+    {
+      "id": "wf4-n3",
+      "name": "Generar reporte semanal",
+      "type": "n8n-nodes-base.code"
+    },
+    {
+      "id": "wf4-n4",
+      "name": "Enviar reporte Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "credentials": {
+        "telegramApi": {
+          "name": "Telegram Bot - SMR Job Agent"
+        }
+      }
+    }
+  ]
 }
