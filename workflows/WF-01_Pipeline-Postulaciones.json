@@ -1,0 +1,1438 @@
+{
+  "updatedAt": "2026-04-06T16:53:27.581Z",
+  "createdAt": "2026-03-29T04:13:30.309Z",
+  "id": "XnyWVCKuFSvWGPqA",
+  "name": "WF-01 Pipeline Postulaciones Automáticas",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "id": "node-schedule",
+      "name": "Schedule 7am y 3pm Chile",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        304
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 7 * * *"
+            },
+            {
+              "field": "cronExpression",
+              "expression": "0 15 * * *"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "node-gob-tag1",
+      "name": "GOB Scrape analista",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        224,
+        208
+      ],
+      "parameters": {
+        "url": "https://www.getonbrd.com/api/v0/search/jobs?query=analista+procesos&per_page=50",
+        "options": {
+          "timeout": 15000
+        }
+      }
+    },
+    {
+      "id": "node-gob-tag2",
+      "name": "GOB Scrape procesos",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        224,
+        400
+      ],
+      "parameters": {
+        "url": "https://www.getonbrd.com/api/v0/search/jobs?query=automatizacion+sistemas&per_page=50",
+        "options": {
+          "timeout": 15000
+        }
+      }
+    },
+    {
+      "id": "node-bne",
+      "name": "BNE Scrape",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        224,
+        608
+      ],
+      "parameters": {
+        "url": "https://cl.indeed.com/jobs?q=analista+procesos&l=Santiago%2C+Regi%C3%B3n+Metropolitana&fromage=3&format=json",
+        "options": {
+          "timeout": 15000
+        }
+      }
+    },
+    {
+      "id": "node-normalize-gob",
+      "name": "Normalizar GOB",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        464,
+        304
+      ],
+      "parameters": {
+        "jsCode": "const results = [];\nfor (const item of $input.all()) {\n  const raw = item.json;\n  const jobs = raw.data || [];\n  for (const job of jobs) {\n    const attrs = job.attributes || {};\n    const cargo = (attrs.title || '').trim();\n    if (!cargo) continue;\n    const companySlug = job.relationships?.company?.data?.id || '';\n    const empresa = companySlug ? companySlug.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ') : 'Empresa';\n    const url = job.links?.public_url || ('https://www.getonbrd.com/jobs/' + (job.id || ''));\n    const fechaTs = attrs.published_at ? attrs.published_at * 1000 : Date.now();\n    const fechaPublicacion = new Date(fechaTs).toISOString().split('T')[0];\n    const modalidad = attrs.remote_modality === 'full' ? 'Remoto' : attrs.remote_modality === 'hybrid' ? 'Híbrido' : 'Presencial';\n    const descripcion = (attrs.description || '').replace(/<[^>]+>/g, '').substring(0, 500);\n    results.push({ json: { cargo, empresa, ciudad: modalidad === 'Remoto' ? 'Remoto' : 'Santiago', url, descripcion, portal: 'GetOnBoard', fechaPublicacion, salarioMin: attrs.min_salary || 0, salarioMax: attrs.max_salary || 0 } });\n  }\n}\nreturn results.length ? results : [{ json: { _noResults: true, portal: 'GetOnBoard' } }];"
+      }
+    },
+    {
+      "id": "node-normalize-bne",
+      "name": "Normalizar BNE",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        464,
+        608
+      ],
+      "parameters": {
+        "jsCode": "const body = $input.first().json;\n\nif (body.code === 'ERR_BAD_REQUEST' || (typeof body.status === 'number' && body.status >= 400) || body.name === 'AxiosError') {\n  return [];\n}\n\nconst jobs = body.offers || body.data || body.results || body.jobs || (Array.isArray(body) ? body : []);\nif (!Array.isArray(jobs) || jobs.length === 0) return [];\n\nreturn jobs.map(job => ({\n  json: {\n    cargo: job.titulo || job.title || job.nombre || '',\n    empresa: job.empresa || job.company || job.employer || '',\n    ciudad: job.ciudad || job.location || job.region || 'Santiago',\n    url: job.url || job.link || '',\n    descripcion: (job.descripcion || job.description || '').replace(/<[^>]*>/g, '').slice(0, 4000),\n    portal: 'Indeed Chile',\n    fechaPublicacion: job.fecha || job.date || job.published_at || new Date().toISOString(),\n    metodoPago: 'formulario',\n    salarioMin: null,\n    salarioMax: null,\n    idExterno: String(job.id || job.oferta_id || '')\n  }\n})).filter(item => item.json.cargo !== '');"
+      }
+    },
+    {
+      "id": "node-merge",
+      "name": "Merge Portales",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        704,
+        400
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "node-filter",
+      "name": "Filtrado Básico",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        944,
+        400
+      ],
+      "parameters": {
+        "jsCode": "const items = $input.all().filter(i => !i.json._empty);\nconst KEYWORDS = ['analista', 'automatizacion', 'automatización', 'procesos', 'control gestion', 'gestión', 'operaciones', 'consultor', 'sistemas', 'datos', ' bi ', 'erp', 'mejora continua', 'kpi', 'proyectos'];\nconst CIUDADES = ['santiago', 'valparaíso', 'valparaiso', 'remoto', 'remote', 'teletrabajo', 'híbrido', 'hibrido', 'presencial'];\nconst HOY = new Date();\nconst SIETE_DIAS = 7 * 24 * 60 * 60 * 1000;\n\nconst filtered = items.filter(item => {\n  const j = item.json;\n  if (!j.cargo) return false;\n  const cargo = (j.cargo || '').toLowerCase();\n  const ciudad = (j.ciudad || '').toLowerCase();\n  const fecha = j.fechaPublicacion ? new Date(j.fechaPublicacion) : HOY;\n\n  const tieneKeyword = KEYWORDS.some(k => cargo.includes(k));\n  const ciudadOk = CIUDADES.some(c => ciudad.includes(c)) || ciudad === '';\n  const reciente = (HOY - fecha) <= SIETE_DIAS;\n\n  return tieneKeyword && ciudadOk && reciente;\n});\n\nif (filtered.length === 0) {\n  return [{ json: { _noResults: true, _totalScraped: items.length } }];\n}\nreturn filtered;"
+      }
+    },
+    {
+      "id": "node-telegram-no-offers",
+      "name": "Telegram Sin Ofertas",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1424,
+        608
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/botTELEGRAM_BOT_TOKEN_REDACTED/sendMessage",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "chat_id",
+              "value": "8298437242"
+            },
+            {
+              "name": "text",
+              "value": "📭 Hoy no encontré ofertas relevantes en los portales monitoreados. El sistema seguirá revisando en la próxima ejecución programada."
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "node-notion-dedup",
+      "name": "Dedup Notion Query",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1424,
+        304
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/databases/2d03b76e-193b-8087-83c6-fae54ef2fe08/query",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer API_KEY_REDACTED"
+            },
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": []
+        },
+        "options": {},
+        "specifyBody": "json",
+        "jsonBody": "={{ ({\"filter\":{\"property\":\"Fecha de postulaci\\u00f3n\",\"date\":{\"on_or_after\":$today.minus({days:30}).toISODate()}},\"page_size\":100}) }}",
+        "body": ""
+      }
+    },
+    {
+      "id": "node-dedup-filter",
+      "name": "Descartar Duplicados",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1664,
+        304
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Notion result is the current input item\nconst notionData = $input.item.json;\n\n// Get the original job item paired with this execution\nlet jobJson = null;\ntry {\n  const pairedItem = $('\\u00bfSin ofertas?').item;\n  if (\n    pairedItem &&\n    pairedItem.json &&\n    typeof pairedItem.json === 'object' &&\n    !Array.isArray(pairedItem.json) &&\n    !pairedItem.json.error\n  ) {\n    jobJson = pairedItem.json;\n  }\n} catch (e) {}\n\n// If job lookup failed, try input item directly\nif (!jobJson) {\n  const inp = $input.item.json;\n  if (\n    inp &&\n    typeof inp === 'object' &&\n    !Array.isArray(inp) &&\n    !inp.error &&\n    inp.titulo\n  ) {\n    jobJson = inp;\n  }\n}\n\n// Still no job — skip item\nif (!jobJson || typeof jobJson !== 'object' || Array.isArray(jobJson)) {\n  return [];\n}\n\n// If Notion errored — pass job through (fail-safe)\nconst notionOk = notionData && !notionData.error && Array.isArray(notionData.results);\nif (!notionOk) {\n  return [{ json: jobJson }];\n}\n\n// Extract existing URLs from Notion pages\nconst existingUrls = new Set();\nfor (const page of notionData.results) {\n  const url = page.properties?.['Link\\ud83d\\udd39']?.url\n           || page.properties?.['Link']?.url\n           || page.properties?.['URL']?.url\n           || page.properties?.['url']?.url\n           || '';\n  if (url) existingUrls.add(url.trim());\n}\n\n// Check if job URL is already in Notion\nconst jobUrl = (jobJson.url || '').trim();\nconst isDuplicate = jobUrl && existingUrls.has(jobUrl);\n\nif (isDuplicate) {\n  return [];\n}\n\nreturn [{ json: jobJson }];"
+      }
+    },
+    {
+      "id": "node-scoring",
+      "name": "Scoring OpenRouter",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1904,
+        304
+      ],
+      "parameters": {
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer API_KEY_REDACTED"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "jsonBody": "={{ JSON.stringify({ model: 'openrouter/free', max_tokens: 500, messages: [{ role: 'user', content: 'Evalúa esta oferta para Simón Marín Rojas (Ing. Comercial, especialista en procesos y automatización).\\n\\nOFERTA:\\nCargo: ' + $json.cargo + '\\nEmpresa: ' + $json.empresa + '\\nPortal: ' + $json.portal + '\\nDescripción: ' + ($json.descripcion || '').substring(0, 2000) + '\\n\\nSCORING (+pts):\\n+3: keywords del perfil (análisis procesos, automatización, n8n, KPIs, control gestión, BPMN, Notion, Power BI, ERP)\\n+2: renta publicada $800K-$1.8M CLP\\n+2: cargo analista (no jefatura ni subalterno)\\n+2: Santiago, Valparaíso o 100% remoto\\n+1: empresa >20 empleados\\n+1 por herramienta conocida (Notion, n8n, Power BI, Excel, BPMN)\\n\\nEXCLUSIÓN TOTAL (score=0):\\n- Renta < $800K\\n- Vendedor/call center/promotor\\n- Experiencia requerida > 5 años\\n- Solo regiones fuera de Santiago/Valparaíso sin remoto\\n\\nBusca email de contacto RRHH en la descripción si existe.\\n\\nDevuelve SOLO JSON válido:\\n{\"score\": 0-10, \"justificacion\": \"1 oración\", \"keywords\": [\"kw1\",\"kw2\"], \"emailContacto\": \"email o null\"}' }] }) }}"
+      }
+    },
+    {
+      "id": "node-parse-score",
+      "name": "Parsear Score",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2144,
+        304
+      ],
+      "parameters": {
+        "jsCode": "const claudeResp = $input.item.json;\nlet offerData = {};\ntry { offerData = $('Descartar Duplicados').item.json; } catch(e) {}\n\nlet scoreData = { score: 0, justificacion: 'Error parsing', keywords: [], emailContacto: null };\n\ntry {\n  const content = claudeResp.choices?.[0]?.message?.content || claudeResp.content?.[0]?.text || '';\n  const match = content.match(/\\{[\\s\\S]*\\}/);\n  if (match) scoreData = JSON.parse(match[0]);\n} catch(e) {\n  scoreData.justificacion = 'Parse error: ' + String(e.message).slice(0,50);\n}\n\nreturn [{\n  json: {\n    ...offerData,\n    score: scoreData.score || 0,\n    justificacion: scoreData.justificacion || '',\n    keywords: scoreData.keywords || [],\n    emailContacto: scoreData.emailContacto || null\n  }\n}];"
+      }
+    },
+    {
+      "id": "node-classify",
+      "name": "Clasificar por Score",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        2384,
+        304
+      ],
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false
+                },
+                "conditions": [
+                  {
+                    "id": "c1",
+                    "leftValue": "={{ $json.score }}",
+                    "rightValue": 8,
+                    "operator": {
+                      "type": "number",
+                      "operation": "gte"
+                    }
+                  },
+                  {
+                    "id": "c2",
+                    "leftValue": "={{ $json.emailContacto }}",
+                    "rightValue": "",
+                    "operator": {
+                      "type": "string",
+                      "operation": "isNotEmpty"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false
+                },
+                "conditions": [
+                  {
+                    "id": "c3",
+                    "leftValue": "={{ $json.score }}",
+                    "rightValue": 5,
+                    "operator": {
+                      "type": "number",
+                      "operation": "gte"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "node-collect-auto",
+      "name": "Collect Auto",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        2624,
+        192
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "node-collect-revisar",
+      "name": "Collect Revisar",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        2624,
+        432
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "node-merge-for-report",
+      "name": "Merge Para Reporte",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        2864,
+        304
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "node-build-report",
+      "name": "Construir Reporte",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3104,
+        304
+      ],
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst hoy = new Date().toLocaleDateString('es-CL', {day:'2-digit', month:'2-digit', year:'numeric'});\n\nconst autoEnviar = items.filter(i => i.json.score >= 8 && i.json.emailContacto);\nconst revisar = items.filter(i => i.json.score >= 5 && !(i.json.score >= 8 && i.json.emailContacto));\n\nlet text = `☀️ *Resumen matutino — ${hoy}*\\n\\n`;\n\nif (autoEnviar.length > 0) {\n  text += `✅ *Envío automático: ${autoEnviar.length} oferta${autoEnviar.length>1?'s':''}*\\n`;\n  autoEnviar.forEach((item, i) => {\n    const j = item.json;\n    text += `${i+1}. *${j.cargo}* en ${j.empresa} | Score: ${j.score}/10 | ${j.portal}\\n`;\n  });\n  text += '\\n';\n}\n\nif (revisar.length > 0) {\n  text += `👀 *Para revisar: ${revisar.length} oferta${revisar.length>1?'s':''}*\\n`;\n  revisar.forEach((item, i) => {\n    const j = item.json;\n    const idx = autoEnviar.length + i + 1;\n    text += `${idx}. *${j.cargo}* en ${j.empresa} | Score: ${j.score}/10\\n📎 ${j.url || 'sin URL'}\\n`;\n  });\n}\n\nconst totalItems = items.length;\ntext += `\\n📊 2 portales | ${totalItems} analizadas | ${autoEnviar.length + revisar.length} con score≥5`;\n\nreturn [{ json: { text, autoEnviar: autoEnviar.map(i=>i.json), revisar: revisar.map(i=>i.json) } }];"
+      }
+    },
+    {
+      "id": "node-telegram-report",
+      "name": "Telegram Reporte Matutino",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3344,
+        304
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/botTELEGRAM_BOT_TOKEN_REDACTED/sendMessage",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {}
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "node-gen-email",
+      "name": "Generar Email OpenRouter",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2864,
+        128
+      ],
+      "parameters": {
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer API_KEY_REDACTED"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "jsonBody": "={{ JSON.stringify({ model: 'openrouter/free', max_tokens: 800, messages: [{ role: 'user', content: 'Genera un email de postulación profesional para Simón Marín Rojas.\\n\\nOFERTA:\\nCargo: ' + $json.cargo + '\\nEmpresa: ' + $json.empresa + '\\nDescripción: ' + ($json.descripcion || '').substring(0, 1500) + '\\n\\nPERFIL:\\n- Ingeniero Comercial UCN 2025, 3+ años como Analista de Procesos y Sistemas en Bioproterra SpA\\n- Logros: ERP Notion+Apps Script+n8n, 75% procesos automatizados, 80% reducción tiempo operativo semanal\\n- Stack: n8n, Notion, Google Apps Script, Power BI, Excel avanzado, BPMN\\n- Email: contacto@simonmarin.com | Tel: +56 9 8401 3356\\n\\nREGLAS:\\n- Tono profesional, directo, sin frases genéricas\\n- Máximo 4 párrafos cortos\\n- Incluir 1-2 logros cuantificables relevantes para el cargo\\n- Adaptar terminología al lenguaje del aviso\\n- NO mencionar cofundador ni gerente, solo Analista de Procesos y Sistemas\\n- IMPORTANTE: No incluyas firma, datos de contacto ni despedida con nombre al final del cuerpo. Solo termina con \\'Saludos cordiales,\\' en la última línea.\\n\\nDevuelve SOLO JSON válido:\\n{\"asunto\": \"Postulación [Cargo] — Simón Marín Rojas | Ingeniero Comercial\", \"cuerpo\": \"Texto completo del email\"}' }] }) }}"
+      }
+    },
+    {
+      "id": "node-parse-email",
+      "name": "Parsear Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3104,
+        128
+      ],
+      "parameters": {
+        "jsCode": "// Parsear Email — Run Once for All Items\nconst claudeItem = $input.first();\nconst content = String(claudeItem.json.choices?.[0]?.message?.content || claudeItem.json.content?.[0]?.text || '');\n\nlet emailAsunto = '';\nlet emailCuerpo = '';\ntry {\n  const match = content.match(/\\{[\\s\\S]+\\}/);\n  if (match) {\n    const emailData = JSON.parse(match[0]);\n    if (emailData.asunto) emailAsunto = String(emailData.asunto);\n    if (emailData.cuerpo) emailCuerpo = String(emailData.cuerpo);\n  }\n} catch(e) {}\n\nlet cargo = '', empresa = '', emailContacto = '', portal = '', url = '', score = 0;\ntry {\n  const j = $('Reagrupar Datos + PDF').first().json;\n  cargo = String(j.cargo || '');\n  empresa = String(j.empresa || '');\n  emailContacto = String(j.emailContacto || '');\n  portal = String(j.portal || '');\n  url = String(j.url || '');\n  score = Number(j.score || 0);\n} catch(e) {}\n\nif (!emailAsunto) {\n  emailAsunto = 'Postulación ' + (cargo || 'Cargo') + ' — Simón Marín Rojas | Ingeniero Comercial';\n}\n\nconst result = {};\nresult.cargo = cargo;\nresult.empresa = empresa;\nresult.emailContacto = emailContacto;\nresult.portal = portal;\nresult.url = url;\nresult.score = score;\nresult.emailAsunto = emailAsunto;\nresult.emailCuerpo = emailCuerpo;\n\nconst out = { json: result };\n\ntry {\n  const reagruparItem = $('Reagrupar Datos + PDF').first();\n  if (reagruparItem.binary && reagruparItem.binary.cvPDF) {\n    out.binary = { cvPDF: reagruparItem.binary.cvPDF };\n  }\n} catch(e) {}\n\nreturn [out];"
+      }
+    },
+    {
+      "id": "node-notion-register",
+      "name": "Registrar en Notion",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3472,
+        128
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/pages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer API_KEY_REDACTED"
+            },
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "options": {},
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ \"parent\": { \"database_id\": \"2d03b76e-193b-8087-83c6-fae54ef2fe08\" }, \"properties\": { \"Nombre\": { \"title\": [{ \"text\": { \"content\": ($json.cargo || '') + ' — ' + ($json.empresa || '') } }] }, \"Empresa\\uD83D\\uDD38\": { \"rich_text\": [{ \"text\": { \"content\": $json.empresa || '' } }] }, \"Score \\uD83C\\uDFAF\": { \"number\": $json.score || 0 }, \"Link\\uD83D\\uDD39\": { \"url\": $json.url || null }, \"M\\u00E9todo de env\\u00EDo\": { \"select\": { \"name\": \"Email directo\" } }, \"Estado\": { \"status\": { \"name\": \"Postulado\" } }, \"Probabilidad\": { \"select\": { \"name\": $json.score >= 8 ? 'Alta' : $json.score >= 6 ? 'Media' : 'Baja' } }, \"Fecha de postulaci\\u00F3n\": { \"date\": { \"start\": new Date().toISOString().split('T')[0] } }, \"Portal\": { \"select\": { \"name\": $json.portal || 'GetOnBoard' } } } }) }}"
+      }
+    },
+    {
+      "id": "node-telegram-confirm",
+      "name": "Telegram Confirmación",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3712,
+        128
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/botTELEGRAM_BOT_TOKEN_REDACTED/sendMessage",
+        "sendBody": true,
+        "options": {},
+        "contentType": "json",
+        "specifyBody": "keypair",
+        "jsonBody": "={ \"chat_id\": 8298437242, \"text\": \"✅ *Postulación enviada*\\n\\n*Cargo:* \" + $json.cargo + \"\\n*Empresa:* \" + $json.empresa + \"\\n*Score:* \" + $json.score + \"/10\\n*Portal:* \" + $json.portal + \"\\n*Email enviado a:* \" + $json.emailContacto, \"parse_mode\": \"Markdown\" }",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "chat_id",
+              "value": "8298437242"
+            },
+            {
+              "name": "text",
+              "value": "={{ \"✅ *Postulación enviada*\\n\\n*ID Notion:* \" + (($json.properties && $json.properties.ID && $json.properties.ID.unique_id) ? ($json.properties.ID.unique_id.prefix + \"-\" + $json.properties.ID.unique_id.number) : \"N/A\") + \"\\n*Cargo:* \" + ($('Parsear Email').first().json.cargo || 'N/A') + \"\\n*Empresa:* \" + ($('Parsear Email').first().json.empresa || 'N/A') + \"\\n*Score:* \" + ($('Parsear Email').first().json.score || 0) + \"/10\\n*Portal:* \" + ($('Parsear Email').first().json.portal || 'N/A') + \"\\n*Email:* \" + ($('Parsear Email').first().json.emailContacto || 'N/A') }}"
+            },
+            {
+              "name": "parse_mode",
+              "value": "Markdown"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "node-send-email",
+      "name": "Enviar Email Postulacion",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        3232,
+        128
+      ],
+      "parameters": {
+        "fromEmail": "\"Simón Marín Rojas\" <contacto@simonmarin.com>",
+        "toEmail": "={{ $json.emailContacto }}",
+        "subject": "={{ $json.emailAsunto }}",
+        "options": {
+          "attachments": "cvPDF",
+          "appendAttribution": false
+        },
+        "html": "=<html><head><meta charset=\"UTF-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><style>body{margin:0;padding:0;background:#f0f4f8}a{text-decoration:none}img{border:0;display:block}@media only screen and (max-width:600px){.wrapper{width:100%!important;border-radius:0!important}.body-pad{padding:24px 20px!important}.sig-pad{padding:20px 16px!important}.sig-name{font-size:13pt!important}.banner-img{max-width:140px!important;height:32px!important}}</style></head><body><center><table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#f0f4f8;padding:20px 0\"><tr><td align=\"center\"><table class=\"wrapper\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"max-width:600px;width:100%;background:#ffffff;border-radius:10px;overflow:hidden;box-shadow:0 2px 16px rgba(0,0,0,0.10)\"><tr><td style=\"padding:36px 40px 24px 40px;border-bottom:2px solid #0d2137\"><p style=\"margin:0 0 5px 0;font-family:Georgia,serif;font-size:18pt;font-weight:bold;color:#0d2137;letter-spacing:0.5px;\">SIMÓN MARÍN ROJAS</p><p style=\"margin:0;font-family:Arial,sans-serif;font-size:9.5pt;color:#4a6a8a;\">Ingeniero Comercial &nbsp;·&nbsp; Analista de Procesos y Automatización</p></td></tr><tr><td class=\"body-pad\" style=\"padding:32px 40px 28px 40px;font-family:Georgia,serif;font-size:11pt;color:#1a1a1a;line-height:1.8;\">{{ ($json.emailCuerpo || '').replace(/\\n/g,\"<br>\") }}</td></tr><tr><td class=\"sig-pad\" style=\"background:#f7f9fc;border-top:1px solid #e8eef5;padding:24px 32px;text-align:center\"><img src=\"http://simonmarin.com/wp-content/uploads/2026/03/Simon-Marin.png\" width=\"82\" height=\"82\" alt=\"Simón Marín\" style=\"border-radius:50%;border:3px solid #ffffff;box-shadow:0 0 0 3px #0d2137;display:inline-block;margin-bottom:12px\"><p class=\"sig-name\" style=\"margin:0 0 3px 0;font-family:Georgia,serif;font-size:13pt;font-weight:bold;color:#0d2137;\">Simón Marín Rojas</p><p style=\"margin:0 0 5px 0;font-family:Arial,sans-serif;font-size:8.5pt;color:#4a6a8a;\">Ingeniero Comercial | Analista de Procesos y Automatización</p><p style=\"margin:0 0 12px 0;font-family:Arial,sans-serif;font-size:8.5pt;color:#666666\"><a href=\"mailto:contacto@simonmarin.com\" style=\"color:#1a6cb5;\">contacto@simonmarin.com</a> &nbsp;·&nbsp; +56 9 8401 3356 &nbsp;·&nbsp; Santiago, Chile</p><a href=\"https://reuniones.smr.bz/expert/simon.marin?start=scheduling\"><img src=\"http://simonmarin.com/wp-content/uploads/2026/02/AGENDAR-REUNION.gif\" height=\"34\" alt=\"Agendar Reunión\" style=\"display:inline-block;max-width:220px;\"></a></td></tr><tr><td style=\"background:#0d2137;padding:16px 24px;text-align:center\"><a href=\"https://simonmarin.com/\"><img class=\"banner-img\" src=\"http://simonmarin.com/wp-content/uploads/2026/03/Banner_Blanco_SMR-X-297-X-68.png\" height=\"40\" alt=\"SMR\" style=\"display:inline-block;max-width:180px;margin-bottom:14px;\"></a><br><table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\"><tr><td align=\"center\"><a href=\"https://simonmarin.com/\" style=\"margin:0 7px;display:inline-block;vertical-align:middle\"><img src=\"http://simonmarin.com/wp-content/uploads/2026/03/www.png\" width=\"30\" height=\"30\" alt=\"Web\"></a><a href=\"https://www.linkedin.com/in/simon-marin-rojas-perfil/\" style=\"margin:0 7px;display:inline-block;vertical-align:middle\"><img src=\"http://simonmarin.com/wp-content/uploads/2026/03/linkedin.png\" width=\"30\" height=\"30\" alt=\"LinkedIn\"></a><a href=\"https://api.whatsapp.com/send/?phone=56984013356&amp;text=Hola,+buen+d%C3%ADa.+Quisiera+obtener+m%C3%A1s+informaci%C3%B3n.+Quedo+atento,+gracias.&amp;type=phone_number&amp;app_absent=0\" style=\"margin:0 7px;display:inline-block;vertical-align:middle\"><img src=\"http://simonmarin.com/wp-content/uploads/2026/03/wsp.png\" width=\"30\" height=\"30\" alt=\"WhatsApp\"></a><a href=\"mailto:contacto@simonmarin.com\" style=\"margin:0 7px;display:inline-block;vertical-align:middle\"><img src=\"http://simonmarin.com/wp-content/uploads/2026/03/@.png\" width=\"30\" height=\"30\" alt=\"Email\"></a></td></tr></table></td></tr><tr><td style=\"background:#b8975a;padding:8px 24px;text-align:center\"><p style=\"margin:0;font-family:Arial,sans-serif;font-size:8.5pt;color:#ffffff;font-style:italic;letter-spacing:0.6px;\">Convierto la complejidad diaria en decisiones claras</p></td></tr></table></td></tr></table></center></body></html>"
+      },
+      "credentials": {
+        "smtp": {
+          "id": "PzG1HDuy5xJlmEQ5",
+          "name": "Hostinger SMTP - Simón"
+        }
+      },
+      "webhookId": "cc2b438c-d069-448b-a76f-2d8ac59cea17"
+    },
+    {
+      "id": "node-fallback-vacio",
+      "name": "Fallback Vacio",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        224,
+        464
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "assign-source",
+              "name": "_source",
+              "value": "fallback",
+              "type": "string"
+            },
+            {
+              "id": "assign-cargo",
+              "name": "cargo",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "assign-empty",
+              "name": "_empty",
+              "value": true,
+              "type": "boolean"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "node-apify-launch",
+      "name": "Apify Indeed Scraper",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        224,
+        768
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.apify.com/v2/acts/misceres~indeed-scraper/run-sync-get-dataset-items?token=APIFY_KEY_REDACTED&waitSecs=90",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {}
+          ]
+        },
+        "options": {
+          "timeout": 100000
+        }
+      }
+    },
+    {
+      "id": "node-normalize-indeed",
+      "name": "Normalizar Indeed",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        768
+      ],
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\n\nif (response.code === 'ERR_BAD_REQUEST' || (typeof response.status === 'number' && response.status >= 400) || response.name === 'AxiosError') {\n  return [];\n}\n\nlet jobs = [];\nif (Array.isArray(response)) {\n  jobs = response;\n} else if (Array.isArray(response.data)) {\n  jobs = response.data;\n}\n\nif (jobs.length === 0) return [];\n\nreturn jobs.map(job => ({\n  json: {\n    cargo: job.positionName || job.title || '',\n    empresa: job.company || '',\n    ciudad: (job.location || '').toLowerCase().includes('remote') || (job.location || '').toLowerCase().includes('remoto') ? 'Remoto' : (job.location || 'Santiago'),\n    url: job.url || job.externalApplyLink || '',\n    descripcion: (job.description || job.jobDescription || '').replace(/<[^>]*>/g, '').substring(0, 4000),\n    portal: 'Indeed Chile',\n    fechaPublicacion: job.postedAt || job.date || new Date().toISOString(),\n    metodoPago: job.externalApplyLink ? 'email' : 'formulario',\n    salarioMin: null,\n    salarioMax: null\n  }\n})).filter(item => item.json.cargo !== '');"
+      }
+    },
+    {
+      "id": "node-router-ofertas",
+      "name": "Router Ofertas",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1184,
+        400
+      ],
+      "parameters": {
+        "jsCode": "const sd = $getWorkflowStaticData('global');\nconst execId = $execution.id;\n\n// Dedup: si ya procese este execId, no emito nada\nif (sd.lastRouterExecId === execId) {\n  return [];\n}\nsd.lastRouterExecId = execId;\n\nconst allItems = $input.all();\nconst realItems = allItems.filter(i => !i.json._empty && i.json.cargo && i.json.cargo !== '');\n\nif (realItems.length === 0) {\n  return [{ json: { _noOffers: true } }];\n}\n\nreturn realItems.map(i => ({ json: { ...i.json, _noOffers: false } }));",
+        "mode": "runOnceForAllItems"
+      }
+    },
+    {
+      "id": "node-sin-ofertas-if",
+      "name": "¿Sin ofertas?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1312,
+        400
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-no-offers",
+              "leftValue": "={{ $json._noOffers }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "node-merge-gob",
+      "name": "Merge GOB",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        600,
+        260
+      ],
+      "parameters": {
+        "mode": "append",
+        "waitForAllInputConnections": true,
+        "numberInputs": 2
+      }
+    },
+    {
+      "id": "node-personalizar-cv",
+      "name": "Personalizar CV OpenRouter",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2864,
+        400
+      ],
+      "parameters": {
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer API_KEY_REDACTED"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "jsonBody": "={{ JSON.stringify({ model: 'openrouter/free', max_tokens: 1000, messages: [{ role: 'user', content: 'Eres experto en CVs ATS para el mercado chileno. Personaliza el CV de Simón Marín Rojas para este cargo.\\n\\nCARGO: ' + $json.cargo + '\\nEMPRESA: ' + $json.empresa + '\\nDESCRIPCIÓN:\\n' + ($json.descripcion || '').substring(0, 1500) + '\\n\\nBULLETS BASE (reordenar los 6 por relevancia al cargo, NO inventar):\\n1. Diseño e implementación de ERP avanzado (Notion + Apps Script) integrado con n8n en VPS.\\n2. Creación del departamento de licitaciones: automatización completa de búsqueda, selección y entrega de propuestas.\\n3. Automatización de contratos y documentación, reduciendo en un 80% el tiempo operativo semanal.\\n4. Desarrollo de portal unificado para colaboradores externos con módulos de capacitación y gestión.\\n5. Elaboración de reportes operativos y seguimiento de KPIs.\\n6. Resultado: 75%+ procesos automatizados, operación con equipo mínimo.\\n\\nDevuelve SOLO JSON válido sin markdown: {\"resumen\": \"3-4 oraciones con keywords del aviso y logros cuantificables\", \"bullets\": [\"bullet 1\", \"bullet 2\", \"bullet 3\", \"bullet 4\", \"bullet 5\", \"bullet 6\"]}' }] }) }}"
+      }
+    },
+    {
+      "id": "node-armar-cv-html",
+      "name": "Armar CV HTML",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3104,
+        400
+      ],
+      "parameters": {
+        "jsCode": "// ── ARMAR CV HTML v4.1 ── Mode: runOnceForAllItems\nconst item = $input.first();\nconst cvRaw = item.json?.choices?.[0]?.message?.content || item.json?.content?.[0]?.text || '';\n\nlet cargo = '', empresa = '', emailContacto = '', resumen = '', bullets = [], keywords = [], emailCuerpo = '';\ntry {\n  const jsonMatch = cvRaw.match(/```json\\n([\\s\\S]*?)\\n```/) || cvRaw.match(/\\{[\\s\\S]*\\}/);\n  const parsed = JSON.parse(jsonMatch ? jsonMatch[1] || jsonMatch[0] : cvRaw);\n  cargo = parsed.cargo || '';\n  empresa = parsed.empresa || '';\n  emailContacto = parsed.emailContacto || parsed.emailDestino || '';\n  resumen = parsed.resumen || '';\n  bullets = parsed.bullets || [];\n  keywords = parsed.keywords || [];\n  emailCuerpo = parsed.emailCuerpo || '';\n} catch(e) {\n  cargo = item.json?.cargo || '';\n  empresa = item.json?.empresa || '';\n  emailContacto = item.json?.emailContacto || '';\n  resumen = item.json?.resumen || '';\n  bullets = item.json?.bullets || [];\n  keywords = item.json?.keywords || [];\n  emailCuerpo = item.json?.emailCuerpo || '';\n}\n\nconst display = bullets.slice(0, 4);\n\nconst iconDoc = `<svg width=\"13\" height=\"13\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"#1a6cb5\" stroke-width=\"2.2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" style=\"vertical-align:middle;margin-right:7px;flex-shrink:0\"><path d=\"M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z\"/><polyline points=\"14 2 14 8 20 8\"/><line x1=\"16\" y1=\"13\" x2=\"8\" y2=\"13\"/><line x1=\"16\" y1=\"17\" x2=\"8\" y2=\"17\"/></svg>`;\nconst iconGrad = `<svg width=\"13\" height=\"13\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"#1a6cb5\" stroke-width=\"2.2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" style=\"vertical-align:middle;margin-right:7px;flex-shrink:0\"><path d=\"M22 10v6M2 10l10-5 10 5-10 5z\"/><path d=\"M6 12v5c3 3 9 3 12 0v-5\"/></svg>`;\nconst iconBrief = `<svg width=\"13\" height=\"13\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"#1a6cb5\" stroke-width=\"2.2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" style=\"vertical-align:middle;margin-right:7px;flex-shrink:0\"><rect x=\"2\" y=\"7\" width=\"20\" height=\"14\" rx=\"2\"/><path d=\"M16 7V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v2\"/></svg>`;\nconst iconAward = `<svg width=\"13\" height=\"13\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"#1a6cb5\" stroke-width=\"2.2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" style=\"vertical-align:middle;margin-right:7px;flex-shrink:0\"><circle cx=\"12\" cy=\"8\" r=\"6\"/><path d=\"M15.477 12.89L17 22l-5-3-5 3 1.523-9.11\"/></svg>`;\nconst iconTools = `<svg width=\"13\" height=\"13\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"#1a6cb5\" stroke-width=\"2.2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" style=\"vertical-align:middle;margin-right:7px;flex-shrink:0\"><circle cx=\"12\" cy=\"12\" r=\"3\"/><path d=\"M19.07 4.93l-1.41 1.41M5.34 18.66l-1.41 1.41M20 12h2M2 12h2M19.07 19.07l-1.41-1.41M5.34 5.34L3.93 3.93M12 20v2M12 2v2\"/></svg>`;\n\nconst html = `<!DOCTYPE html>\n<html lang=\"es\">\n<head><meta charset=\"UTF-8\"><style>\n* { margin:0; padding:0; box-sizing:border-box; }\n@page { size: letter; margin: 0; }\nbody {\n  font-family: Georgia, 'Times New Roman', serif;\n  font-size: 11pt;\n  line-height: 1.72;\n  color: #1a1a1a;\n  background: white;\n}\n.header {\n  background: #0d2137;\n  color: white;\n  text-align: center;\n  padding: 32px 30mm 26px;\n}\n.header h1 {\n  font-size: 27pt;\n  font-weight: bold;\n  letter-spacing: 3px;\n  text-transform: uppercase;\n  margin-bottom: 8px;\n  font-family: Georgia, serif;\n}\n.header .subtitle {\n  font-size: 11.5pt;\n  color: #a8c4e0;\n  font-weight: normal;\n  letter-spacing: 0.8px;\n}\n.contact-bar {\n  background: #eef2f7;\n  border-bottom: 1px solid #c8d8ea;\n  padding: 10px 25mm;\n  display: flex;\n  flex-wrap: wrap;\n  gap: 4px 24px;\n  align-items: center;\n  font-size: 9.5pt;\n  color: #2c4a6e;\n}\n.ci { display:flex; align-items:center; gap:6px; white-space:nowrap; }\n.content { padding: 20px 25mm 24px; }\nh2 {\n  display: flex;\n  align-items: center;\n  font-family: Georgia, serif;\n  font-size: 10pt;\n  font-weight: bold;\n  text-transform: uppercase;\n  letter-spacing: 2.5px;\n  color: #0d2137;\n  border-bottom: 1.5px solid #0d2137;\n  padding-bottom: 5px;\n  margin-top: 22px;\n  margin-bottom: 12px;\n  page-break-after: avoid;\n  break-after: avoid;\n}\n.summary p {\n  font-size: 10.5pt;\n  line-height: 1.78;\n  text-align: justify;\n  color: #222;\n}\n.edu-block {\n  page-break-inside: avoid;\n  break-inside: avoid;\n}\n.edu-row { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:3px; }\n.edu-school { font-weight:bold; font-size:11pt; color:#0d2137; }\n.edu-date { font-size:9.5pt; color:#555; white-space:nowrap; margin-left:8px; }\n.edu-detail { font-size:10.5pt; color:#333; line-height:1.6; margin-top:2px; }\n.job {\n  margin-bottom: 17px;\n  page-break-inside: avoid;\n  break-inside: avoid;\n}\n.job-row { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:1px; }\n.job-company { font-weight:bold; font-size:11pt; color:#0d2137; }\n.job-meta { font-size:9.5pt; color:#555; white-space:nowrap; margin-left:8px; }\n.job-title { font-size:10.5pt; color:#1a6cb5; font-style:italic; margin-bottom:6px; }\nul { margin-left:16px; margin-top:5px; }\nul li { font-size:10.5pt; line-height:1.68; margin-bottom:5px; text-align:justify; }\nul li:last-child { margin-bottom:0; }\n.cert {\n  display:flex;\n  justify-content:space-between;\n  align-items:baseline;\n  margin-bottom:8px;\n  font-size:10.5pt;\n  page-break-inside: avoid;\n  break-inside: avoid;\n}\n.cert-left { flex:1; padding-right:16px; }\n.cert-name { font-weight:bold; color:#1a1a1a; }\n.cert-inst { color:#555; font-size:10pt; }\n.cert-right { text-align:right; white-space:nowrap; color:#555; font-size:9.5pt; line-height:1.5; }\n.sk {\n  margin-bottom:9px;\n  font-size:10.5pt;\n  line-height:1.68;\n  page-break-inside: avoid;\n  break-inside: avoid;\n}\n.sk-label { font-weight:bold; color:#0d2137; }\n.sk-text { color:#222; }\n.ats { color:white; font-size:1pt; line-height:0; display:block; }\n</style></head>\n<body>\n<div class=\"header\">\n  <h1>Simón Marín Rojas</h1>\n  <div class=\"subtitle\">Ingeniero Comercial &nbsp;|&nbsp; Analista de Procesos y Automatización</div>\n</div>\n<div class=\"contact-bar\">\n  <div class=\"ci\">\n    <svg width=\"12\" height=\"12\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"#1a6cb5\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect x=\"2\" y=\"4\" width=\"20\" height=\"16\" rx=\"2\"/><polyline points=\"2,4 12,13 22,4\"/></svg>\n    contacto@simonmarin.com\n  </div>\n  <div class=\"ci\">\n    <svg width=\"12\" height=\"12\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"#1a6cb5\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07A19.5 19.5 0 013.07 10.8 19.79 19.79 0 01.22 2.18 2 2 0 012.18 0h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L6.91 7.91a16 16 0 006.18 6.18l1.28-1.28a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z\"/></svg>\n    +56 9 8401 3356\n  </div>\n  <div class=\"ci\">\n    <svg width=\"12\" height=\"12\" viewBox=\"0 0 24 24\" fill=\"#1a6cb5\"><path d=\"M16 8a6 6 0 016 6v7h-4v-7a2 2 0 00-2-2 2 2 0 00-2 2v7h-4v-7a6 6 0 016-6zM2 9h4v12H2z\"/><circle cx=\"4\" cy=\"4\" r=\"2\" fill=\"#1a6cb5\"/></svg>\n    linkedin.com/in/simon-marin-rojas-perfil\n  </div>\n  <div class=\"ci\">\n    <svg width=\"12\" height=\"12\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"#1a6cb5\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z\"/><circle cx=\"12\" cy=\"10\" r=\"3\"/></svg>\n    Santiago, Chile\n  </div>\n</div>\n<div class=\"content\">\n\n  <h2>${iconDoc}Resumen Profesional</h2>\n  <div class=\"summary\"><p>${resumen}</p></div>\n\n  <h2>${iconGrad}Educación</h2>\n  <div class=\"edu-block\">\n    <div class=\"edu-row\">\n      <span class=\"edu-school\">Universidad Católica del Norte</span>\n      <span class=\"edu-date\">2020 – 2025 &nbsp;·&nbsp; Coquimbo, Chile</span>\n    </div>\n    <div class=\"edu-detail\">Ingeniería Comercial &nbsp;·&nbsp; <em>Minor: Emprendimiento e Innovación</em></div>\n    <div class=\"edu-detail\" style=\"color:#555;font-size:10pt\">Licenciatura en Ciencias de la Administración de Empresas</div>\n  </div>\n\n  <h2>${iconBrief}Experiencia Profesional</h2>\n\n  <div class=\"job\">\n    <div class=\"job-row\">\n      <span class=\"job-company\">Constructora Bioproterra SpA</span>\n      <span class=\"job-meta\">Dic. 2022 – Presente &nbsp;·&nbsp; Santiago, Chile</span>\n    </div>\n    <div class=\"job-title\">Analista de Procesos y Sistemas</div>\n    <ul>\n      ${display.map(b => `<li>${b}</li>`).join('\\n      ')}\n    </ul>\n  </div>\n\n  <div class=\"job\">\n    <div class=\"job-row\">\n      <span class=\"job-company\">Restaurante Mistral</span>\n      <span class=\"job-meta\">Ago. – Dic. 2023 &nbsp;·&nbsp; Coquimbo, Chile</span>\n    </div>\n    <div class=\"job-title\">Asesor en Marketing</div>\n    <ul>\n      <li>Desarrollé diagnóstico comercial integral, lineamientos de branding, comunicación corporativa y campañas digitales para PYME gastronómica, logrando posicionamiento en canal digital desde cero.</li>\n      <li><strong>Premio Feria de Asesorías PYMES en Marketing 2023</strong> — reconocimiento al mejor proyecto de consultoría entre 18 equipos participantes.</li>\n    </ul>\n  </div>\n\n  <div class=\"job\">\n    <div class=\"job-row\">\n      <span class=\"job-company\">Cugall SpA</span>\n      <span class=\"job-meta\">Ene. – Jul. 2023 &nbsp;·&nbsp; Coquimbo, Chile</span>\n    </div>\n    <div class=\"job-title\">Asesor Contable y Financiero</div>\n    <ul>\n      <li>Implementé sistema de control de ingresos y egresos, reportes de flujo de caja y modelos de evaluación de inversiones para empresa industrial manufacturera, mejorando la visibilidad financiera del negocio.</li>\n    </ul>\n  </div>\n\n  <h2>${iconAward}Certificaciones</h2>\n  <div class=\"cert\">\n    <div class=\"cert-left\">\n      <span class=\"cert-name\">Alta Especialización en KPIs y Gestión de Proyectos</span>\n      <span class=\"cert-inst\"> — Escuela Global / Col. de Economistas del Cusco</span>\n    </div>\n    <div class=\"cert-right\">2024<br>180 hrs</div>\n  </div>\n  <div class=\"cert\">\n    <div class=\"cert-left\">\n      <span class=\"cert-name\">Diplomado en Derecho Administrativo</span>\n      <span class=\"cert-inst\"> — Escuela de Derecho UCN</span>\n    </div>\n    <div class=\"cert-right\">Sep. 2023 – Ene. 2024<br>240 hrs</div>\n  </div>\n  <div class=\"cert\">\n    <div class=\"cert-left\">\n      <span class=\"cert-name\">Evaluación Económica de Proyectos</span>\n      <span class=\"cert-inst\"> — Apremin OTEC</span>\n    </div>\n    <div class=\"cert-right\">May. 2023<br>16 hrs</div>\n  </div>\n\n  <h2>${iconTools}Habilidades y Herramientas</h2>\n  <div class=\"sk\"><span class=\"sk-label\">Gestión y Procesos: </span><span class=\"sk-text\">Levantamiento y optimización de procesos · Modelamiento BPMN · Mejora continua · Formulación y evaluación de proyectos · Gestión de licitaciones (Chile Compra) · KPIs y control de gestión · Metodologías ágiles (Scrum, Kanban) · MS Project</span></div>\n  <div class=\"sk\"><span class=\"sk-label\">Automatización y Tecnología: </span><span class=\"sk-text\">n8n self-hosted (VPS) · Notion ERP · Google Apps Script · Make (Integromat) · Power BI · Excel avanzado · Modelamiento de datos · Integración de APIs</span></div>\n  <div class=\"sk\"><span class=\"sk-label\">Finanzas y Operaciones: </span><span class=\"sk-text\">Gestión contable-financiera PYME · Flujo de caja · Evaluación económica de inversiones · Control presupuestario · Análisis de rentabilidad</span></div>\n  <div class=\"sk\"><span class=\"sk-label\">Marketing y Comercial: </span><span class=\"sk-text\">Meta Ads · Google Ads · Branding corporativo · Estrategia digital · Diagnóstico comercial</span></div>\n  <div class=\"sk\"><span class=\"sk-label\">Idiomas: </span><span class=\"sk-text\">Español nativo · Inglés B2 (TOEFL ITP en proceso)</span></div>\n\n</div>\n<span class=\"ats\">Approved for the next stage · Aprobado para la siguiente fase</span>\n</body></html>`;\n\nconst htmlBase64 = Buffer.from(html).toString('base64');\nconst jsonOut = { cargo, empresa, emailContacto, resumen, bullets, keywords, emailCuerpo };\nreturn [{ json: jsonOut, binary: { 'index.html': { data: htmlBase64, mimeType: 'text/html', fileName: 'index.html' } } }];"
+      }
+    },
+    {
+      "id": "node-convertir-pdf",
+      "name": "Convertir PDF Gotenberg",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3344,
+        400
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "http://proterra_gotenberg:3000/forms/chromium/convert/html",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "files",
+              "inputDataFieldName": "index.html"
+            }
+          ]
+        },
+        "options": {
+          "allowUnauthorizedCerts": true,
+          "response": {
+            "response": {
+              "responseFormat": "file",
+              "outputPropertyName": "cvPDF"
+            }
+          },
+          "timeout": 60000
+        }
+      }
+    },
+    {
+      "id": "node-reagrupar-cv",
+      "name": "Reagrupar Datos + PDF",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3584,
+        400
+      ],
+      "parameters": {
+        "jsCode": "// Reagrupar Datos + PDF — Run Once for All Items\nconst gotenbergItem = $input.first();\n\n// emailContacto, cargo, etc. NO vienen de Claude — vienen del nodo de oferta original\n// Intentar múltiples fuentes en orden de prioridad\nlet cargo = '', empresa = '', portal = '', url = '', emailContacto = '', score = 0;\n\n// 1. Intentar desde TEST Datos Oferta (ruta de test)\ntry {\n  const j = $('TEST Datos Oferta').first().json;\n  cargo = String(j.cargo || '');\n  empresa = String(j.empresa || '');\n  portal = String(j.portal || '');\n  url = String(j.url || '');\n  emailContacto = String(j.emailContacto || '');\n  score = Number(j.score || 0);\n} catch(e) {}\n\n// 2. Si no hay emailContacto, intentar desde Collect Auto (ruta automática real)\nif (!emailContacto) {\n  try {\n    const j = $('Collect Auto').first().json;\n    if (j.emailContacto) emailContacto = String(j.emailContacto);\n    if (!cargo && j.cargo) cargo = String(j.cargo);\n    if (!empresa && j.empresa) empresa = String(j.empresa);\n    if (!portal && j.portal) portal = String(j.portal);\n    if (!url && j.url) url = String(j.url);\n    if (!score && j.score) score = Number(j.score);\n  } catch(e) {}\n}\n\n// 3. Fallback: leer resumen/bullets de Armar CV HTML (lo que sí tiene Claude)\nlet resumen = '', bullets = [], keywords = [], emailCuerpo = '';\ntry {\n  const j = $('Armar CV HTML').first().json;\n  resumen = String(j.resumen || '');\n  bullets = j.bullets || [];\n  keywords = j.keywords || [];\n  emailCuerpo = String(j.emailCuerpo || '');\n  // Si cargo/empresa vinieron de Claude (para el caso que el prompt los incluya)\n  if (!cargo && j.cargo) cargo = String(j.cargo);\n  if (!empresa && j.empresa) empresa = String(j.empresa);\n  if (!emailContacto && j.emailContacto) emailContacto = String(j.emailContacto);\n} catch(e) {}\n\nconst jsonOut = { cargo, empresa, portal, url, emailContacto, score, resumen, bullets, keywords, emailCuerpo };\nconst result = { json: jsonOut };\n\n// Pasar el PDF binario de Gotenberg directamente sin reconstruir\nif (gotenbergItem.binary && gotenbergItem.binary.cvPDF) {\n  gotenbergItem.binary.cvPDF.fileName = 'SIMON-MARIN-CV.pdf';\n  gotenbergItem.binary.cvPDF.mimeType = 'application/pdf';\n  result.binary = gotenbergItem.binary;\n}\n\nreturn [result];"
+      }
+    },
+    {
+      "id": "node-test-oferta",
+      "name": "TEST Oferta Manual",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        1904,
+        600
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "node-test-data",
+      "name": "TEST Datos Oferta",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2144,
+        600
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1",
+              "name": "cargo",
+              "value": "Analista de Procesos y Automatización",
+              "type": "string"
+            },
+            {
+              "id": "2",
+              "name": "empresa",
+              "value": "Empresa Test S.A.",
+              "type": "string"
+            },
+            {
+              "id": "3",
+              "name": "descripcion",
+              "value": "Buscamos Analista de Procesos con experiencia en automatización de flujos de trabajo, n8n, Notion, Power BI y control de gestión. Requisitos: levantamiento de procesos BPMN, optimización de KPIs, implementación de ERP, mejora continua. Renta: $1.200.000 - $1.500.000 bruto. Santiago presencial/híbrido.",
+              "type": "string"
+            },
+            {
+              "id": "4",
+              "name": "portal",
+              "value": "Test",
+              "type": "string"
+            },
+            {
+              "id": "5",
+              "name": "url",
+              "value": "https://test.com/oferta/123",
+              "type": "string"
+            },
+            {
+              "id": "6",
+              "name": "score",
+              "value": 9,
+              "type": "number"
+            },
+            {
+              "id": "7",
+              "name": "emailContacto",
+              "value": "contacto@simonmarin.com",
+              "type": "string"
+            },
+            {
+              "id": "8",
+              "name": "keywords",
+              "value": "=[\"automatización\",\"n8n\",\"procesos\",\"BPMN\",\"KPIs\",\"Notion\",\"Power BI\"]",
+              "type": "array"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "node-ct-apify",
+      "name": "CT Apify Scrape",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        260,
+        960
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.apify.com/v2/acts/apify~playwright-scraper/run-sync-get-dataset-items?token=APIFY_KEY_REDACTED&timeout=90&memory=512",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"startUrls\":[{\"url\":\"https://cl.computrabajo.com/trabajo-de-analista-de-procesos-en-rmetropolitana?pubdate=1\"},{\"url\":\"https://cl.computrabajo.com/trabajo-de-analista-de-automatizacion-en-rmetropolitana?pubdate=1\"}],\"pageFunction\":\"async function pageFunction({page,log}){try{await page.waitForSelector('article.box_offer',{timeout:12000}).catch(()=>{});}catch(e){}const data=await page.evaluate(()=>Array.from(document.querySelectorAll('article.box_offer')).slice(0,10).map(el=>({cargo:(el.querySelector('h2.fs18 a,h2 a')?.innerText||'').trim(),empresa:(el.querySelector('p.dFlex.vm_fx.fs16.fc_base.mt5,p.fs16.fc_base.mt5')?.innerText||'').trim(),ciudad:(el.querySelector('span.mr10')?.innerText||'Santiago').trim(),url:el.querySelector('a.js-o-link')?.href||'',portal:'Computrabajo',fechaPublicacion:new Date().toISOString().split('T')[0],descripcion:''})));return data.filter(j=>j.cargo);}\",\"maxPagesPerCrawl\":2,\"maxConcurrency\":1}"
+      }
+    },
+    {
+      "id": "node-normalize-ct",
+      "name": "Normalizar CT",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        960
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const results = [];\nfor (const item of $input.all()) {\n  const raw = item.json;\n  const arr = Array.isArray(raw) ? raw : [];\n  for (const j of arr) {\n    if (!j.cargo) continue;\n    results.push({ json: {\n      cargo: j.cargo,\n      empresa: j.empresa || '',\n      ciudad: j.ciudad || 'Santiago',\n      url: j.url || '',\n      descripcion: j.descripcion || '',\n      portal: 'Computrabajo',\n      fechaPublicacion: j.fechaPublicacion || new Date().toISOString().split('T')[0]\n    }});\n  }\n}\nreturn results.length ? results : [{ json: { _noResults: true, portal: 'Computrabajo' } }];"
+      }
+    },
+    {
+      "id": "node-laborum-apify",
+      "name": "Laborum Apify Scrape",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        260,
+        1120
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.apify.com/v2/acts/apify~playwright-scraper/run-sync-get-dataset-items?token=APIFY_KEY_REDACTED&timeout=90&memory=512",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"startUrls\":[{\"url\":\"https://www.laborum.cl/empleos/buscar?q=analista+procesos&l=santiago\"},{\"url\":\"https://www.laborum.cl/empleos/buscar?q=analista+automatizacion&l=santiago\"}],\"pageFunction\":\"async function pageFunction({page,log}){try{await page.waitForTimeout(5000);const selectors=['[data-testid=\\\"job-item\\\"]','[class*=\\\"JobCard\\\"]','[class*=\\\"job-card\\\"]','article[class*=\\\"offer\\\"]','li[class*=\\\"job\\\"]'];let found=false;for(const s of selectors){try{await page.waitForSelector(s,{timeout:3000});found=true;break;}catch(e){}}const data=await page.evaluate(()=>{const cards=document.querySelectorAll('[data-testid=\\\"job-item\\\"],[class*=\\\"JobCard\\\"],[class*=\\\"job-card\\\"],article');return Array.from(cards).slice(0,10).map(el=>{const a=el.querySelector('a[href*=\\\"/empleo/\\\"],a[href*=\\\"/oferta/\\\"]');const title=el.querySelector('h2,h3,[class*=\\\"title\\\"],[class*=\\\"cargo\\\"]');const company=el.querySelector('[class*=\\\"company\\\"],[class*=\\\"empresa\\\"],[class*=\\\"client\\\"]');const city=el.querySelector('[class*=\\\"city\\\"],[class*=\\\"ciudad\\\"],[class*=\\\"location\\\"]');return{cargo:(title?.innerText||'').trim(),empresa:(company?.innerText||'').trim(),ciudad:(city?.innerText||'Santiago').trim(),url:a?.href||window.location.href,portal:'Laborum',fechaPublicacion:new Date().toISOString().split('T')[0],descripcion:''};}).filter(j=>j.cargo);});return data;}catch(e){log.error('Laborum error: '+e.message);return[];}}\",\"maxPagesPerCrawl\":2,\"maxConcurrency\":1,\"launchContext\":{\"useChrome\":true,\"launchOptions\":{\"args\":[\"--no-sandbox\",\"--disable-setuid-sandbox\"]}}}"
+      }
+    },
+    {
+      "id": "node-normalize-laborum",
+      "name": "Normalizar Laborum",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        1120
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const results = [];\nfor (const item of $input.all()) {\n  const raw = item.json;\n  const arr = Array.isArray(raw) ? raw : [];\n  for (const j of arr) {\n    if (!j.cargo) continue;\n    results.push({ json: {\n      cargo: j.cargo,\n      empresa: j.empresa || '',\n      ciudad: j.ciudad || 'Santiago',\n      url: j.url || '',\n      descripcion: j.descripcion || '',\n      portal: 'Laborum',\n      fechaPublicacion: j.fechaPublicacion || new Date().toISOString().split('T')[0]\n    }});\n  }\n}\nreturn results.length ? results : [{ json: { _noResults: true, portal: 'Laborum' } }];"
+      }
+    },
+    {
+      "id": "node-exec-trigger",
+      "name": "Trigger desde WF-02",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        500
+      ],
+      "parameters": {}
+    }
+  ],
+  "connections": {
+    "Schedule 7am y 3pm Chile": {
+      "main": [
+        [
+          {
+            "node": "GOB Scrape analista",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "GOB Scrape procesos",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "BNE Scrape",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Fallback Vacio",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Apify Indeed Scraper",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "CT Apify Scrape",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Laborum Apify Scrape",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "BNE Scrape": {
+      "main": [
+        [
+          {
+            "node": "Normalizar BNE",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalizar GOB": {
+      "main": [
+        [
+          {
+            "node": "Merge Portales",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalizar BNE": {
+      "main": [
+        [
+          {
+            "node": "Merge Portales",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Portales": {
+      "main": [
+        [
+          {
+            "node": "Filtrado Básico",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dedup Notion Query": {
+      "main": [
+        [
+          {
+            "node": "Descartar Duplicados",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Descartar Duplicados": {
+      "main": [
+        [
+          {
+            "node": "Scoring OpenRouter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Scoring OpenRouter": {
+      "main": [
+        [
+          {
+            "node": "Parsear Score",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parsear Score": {
+      "main": [
+        [
+          {
+            "node": "Clasificar por Score",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clasificar por Score": {
+      "main": [
+        [
+          {
+            "node": "Collect Auto",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Generar Email OpenRouter",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Collect Revisar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collect Auto": {
+      "main": [
+        [
+          {
+            "node": "Merge Para Reporte",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Personalizar CV OpenRouter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collect Revisar": {
+      "main": [
+        [
+          {
+            "node": "Merge Para Reporte",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Para Reporte": {
+      "main": [
+        [
+          {
+            "node": "Construir Reporte",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Construir Reporte": {
+      "main": [
+        [
+          {
+            "node": "Telegram Reporte Matutino",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generar Email OpenRouter": {
+      "main": [
+        [
+          {
+            "node": "Parsear Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parsear Email": {
+      "main": [
+        [
+          {
+            "node": "Enviar Email Postulacion",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Registrar en Notion": {
+      "main": [
+        [
+          {
+            "node": "Telegram Confirmación",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enviar Email Postulacion": {
+      "main": [
+        [
+          {
+            "node": "Registrar en Notion",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalizar Indeed": {
+      "main": [
+        [
+          {
+            "node": "Merge Portales",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Apify Indeed Scraper": {
+      "main": [
+        [
+          {
+            "node": "Normalizar Indeed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Sin ofertas?": {
+      "main": [
+        [
+          {
+            "node": "Telegram Sin Ofertas",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Dedup Notion Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GOB Scrape analista": {
+      "main": [
+        [
+          {
+            "node": "Merge GOB",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GOB Scrape procesos": {
+      "main": [
+        [
+          {
+            "node": "Merge GOB",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Personalizar CV OpenRouter": {
+      "main": [
+        [
+          {
+            "node": "Armar CV HTML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Armar CV HTML": {
+      "main": [
+        [
+          {
+            "node": "Convertir PDF Gotenberg",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Convertir PDF Gotenberg": {
+      "main": [
+        [
+          {
+            "node": "Reagrupar Datos + PDF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reagrupar Datos + PDF": {
+      "main": [
+        [
+          {
+            "node": "Generar Email OpenRouter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "TEST Oferta Manual": {
+      "main": [
+        [
+          {
+            "node": "TEST Datos Oferta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "TEST Datos Oferta": {
+      "main": [
+        [
+          {
+            "node": "Personalizar CV OpenRouter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CT Apify Scrape": {
+      "main": [
+        [
+          {
+            "node": "Normalizar CT",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalizar CT": {
+      "main": [
+        [
+          {
+            "node": "Merge Portales",
+            "type": "main",
+            "index": 3
+          }
+        ]
+      ]
+    },
+    "Laborum Apify Scrape": {
+      "main": [
+        [
+          {
+            "node": "Normalizar Laborum",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalizar Laborum": {
+      "main": [
+        [
+          {
+            "node": "Merge Portales",
+            "type": "main",
+            "index": 4
+          }
+        ]
+      ]
+    },
+    "Trigger desde WF-02": {
+      "main": [
+        [
+          {
+            "node": "GOB Scrape analista",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "GOB Scrape procesos",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "BNE Scrape",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Fallback Vacio",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Apify Indeed Scraper",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "CT Apify Scrape",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Laborum Apify Scrape",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fallback Vacio": {
+      "main": [
+        [
+          {
+            "node": "Merge Portales",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filtrado Básico": {
+      "main": [
+        [
+          {
+            "node": "Router Ofertas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Router Ofertas": {
+      "main": [
+        [
+          {
+            "node": "¿Sin ofertas?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge GOB": {
+      "main": [
+        [
+          {
+            "node": "Normalizar GOB",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Santiago",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false,
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "I3orjxloJLGwQYj4"
+  },
+  "staticData": {
+    "node:Schedule 08:30 Chile": {
+      "recurrenceRules": []
+    },
+    "node:Schedule 7am y 3pm Chile": {
+      "recurrenceRules": []
+    },
+    "global": {
+      "lastRouterExecId": "14192"
+    }
+  },
+  "meta": null,
+  "pinData": {},
+  "versionId": "1692b7ed-72e0-4896-aa5d-9951238da98d",
+  "activeVersionId": "1692b7ed-72e0-4896-aa5d-9951238da98d",
+  "versionCounter": 233,
+  "triggerCount": 1,
+  "tags": []
+}
