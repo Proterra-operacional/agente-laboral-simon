@@ -1,0 +1,1785 @@
+{
+  "updatedAt": "2026-04-06T07:01:23.022Z",
+  "createdAt": "2026-03-25T20:29:32.059Z",
+  "id": "TLbvtQHwoPTWWy9y",
+  "name": "WF-02 Agente Conversacional Telegram",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "id": "wf2-n1",
+      "name": "Telegram: todos los mensajes",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        300
+      ],
+      "parameters": {
+        "additionalFields": {},
+        "updates": [
+          "message"
+        ]
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "rE6bL40aCajtjgBJ",
+          "name": "Telegram Bot - SMR Job Agent"
+        }
+      },
+      "webhookId": "smr-postular-wh"
+    },
+    {
+      "id": "wf2-n2",
+      "name": "Detectar tipo + Encolar",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        300
+      ],
+      "parameters": {
+        "jsCode": "const item=$input.first().json;const msg=item.message||{};const chatId=msg.chat?.id?.toString()||'default';const msgTimestamp=Date.now();const execId=$execution.id;let text='',mediaType='text',fileId=null;if(msg.text){text=msg.text.trim();mediaType='text';}else if(msg.photo){fileId=msg.photo[msg.photo.length-1].file_id;text=msg.caption?.trim()||'';mediaType='photo';}else if(msg.voice){fileId=msg.voice.file_id;text='[voz]';mediaType='voice';}else if(msg.audio){fileId=msg.audio.file_id;text='[audio]';mediaType='audio';}else if(msg.document){fileId=msg.document.file_id;text='[doc:'+(msg.document.file_name||'archivo')+']';mediaType='document';}else if(msg.video||msg.video_note){text='[video]';mediaType='video';}else if(msg.sticker){text='[sticker '+(msg.sticker.emoji||'')+']';mediaType='sticker';}else{return[];}if(!text&&mediaType!=='photo')return[];const sd=$getWorkflowStaticData('global');if(!sd.queues)sd.queues={};if(!sd.queues[chatId])sd.queues[chatId]=[];sd.queues[chatId].push({text,timestamp:msgTimestamp,processed:false,mediaType,fileId});sd.queues[chatId]=sd.queues[chatId].slice(-20);if(!sd.lastExecId)sd.lastExecId={};sd.lastExecId[chatId]=execId;return[{json:{chatId,msgTimestamp,execId}}];",
+        "mode": "runOnceForAllItems"
+      }
+    },
+    {
+      "id": "wf2-n3",
+      "name": "Esperar 2.5s",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        700,
+        300
+      ],
+      "parameters": {
+        "unit": "seconds",
+        "amount": 2.5
+      },
+      "webhookId": "376a7c08-0fb8-4c68-8cbc-6f8a706e680d"
+    },
+    {
+      "id": "wf2-n4",
+      "name": "Soy el ultimo + Contexto",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        940,
+        300
+      ],
+      "parameters": {
+        "jsCode": "const allInputs=$input.all();\nconst mainInput=allInputs.find(i=>i.json.execId!=null)||allInputs[0];\nconst sd=$getWorkflowStaticData('global');\nconst chatId=mainInput.json.chatId;\nconst messageText=(mainInput.json.messageText||'').trim();\nconst hasPhoto=mainInput.json.hasPhoto===true;\nconst photoFileId=mainInput.json.photoFileId||null;\nconst hasAudio=mainInput.json.hasAudio===true;\nconst audioFileId=mainInput.json.audioFileId||null;\nconst transcribedText=mainInput.json.transcribedText||null;\n\nif(!sd.conversations)sd.conversations={};\nif(!sd.pendingPostulacion)sd.pendingPostulacion={};\nif(!sd.pendingEmail)sd.pendingEmail={};\nif(!sd.voiceMode)sd.voiceMode={};\nif(!sd.userMemory)sd.userMemory={};\n\nconst pendingPostulacion=sd.pendingPostulacion[chatId]||null;\nconst pendingEmail=sd.pendingEmail[chatId]||null;\n\nconst history=(sd.conversations[chatId]||[]).filter(m=>{\n  const c=typeof m.content==='string'?m.content:JSON.stringify(m.content||'');\n  return!c.includes('Error temporal')&&!c.includes('No pude procesar');\n}).slice(-8);\n\nconst POSTULAR_REGEX=/^\\/postular[_\\s]?(\\d+)/i;\nconst BUSCAR_REGEX=/^\\/buscar|^buscar\\s+trabajo|^busca\\s+ofertas/i;\nconst ESTADO_REGEX=/^\\/estado/i;\nconst ESTADISTICAS_REGEX=/^\\/estadisticas/i;\nconst CANCELAR_REGEX=/^\\/cancelar_(\\d+)/i;\nconst CONFIRMAR_REGEX=/^\\/confirmar_(\\d+)/i;\nconst DETALLE_REGEX=/^\\/detalle_(\\d+)/i;\nconst OFERTAS_REGEX=/^\\/ofertas/i;\n\nlet isBuscar=false,isEmailIntent=false,emailDest=null,isPostularCmd=false,postularIdx=null;\nif(BUSCAR_REGEX.test(messageText))isBuscar=true;\nconst postularMatch=messageText.match(POSTULAR_REGEX);\nif(postularMatch){isPostularCmd=true;postularIdx=postularMatch[1];}\n\nconst emailRegex=/[a-zA-Z0-9._%+\\-]+@[a-zA-Z0-9.\\-]+\\.[a-zA-Z]{2,}/;\nconst emailMatch=messageText.match(emailRegex);\nif(emailMatch)emailDest=emailMatch[0];\n\nconst userMemoryStr=sd.userMemory[chatId]?JSON.stringify(sd.userMemory[chatId]).slice(0,800):'';\n\nconst todayISO=new Date().toISOString().split('T')[0];\n\nlet finalUserContent=messageText;\nif(hasAudio&&transcribedText)finalUserContent=transcribedText;\n\nconst SYSTEM=`Eres un agente especializado en búsqueda laboral activa para Simón Marín Rojas, Ingeniero Comercial con especialización en procesos y automatización.\\n\\nFecha actual: ${todayISO}\\nChatId: ${chatId}\\n\\nCONTEXTO DE MEMORIA:\\n${userMemoryStr}\\n\\nTu rol es ayudar a Simón a:\\n1. Encontrar y filtrar ofertas laborales relevantes\\n2. Personalizar su CV para cada postulación\\n3. Redactar emails de presentación\\n4. Gestionar el seguimiento de postulaciones\\n5. Registrar todo en Notion\\n\\nPerfil de Simón:\\n- Ingeniero Comercial, Universidad Católica del Norte (Coquimbo, ahora en Santiago)\\n- Especialización en procesos, automatización y control de gestión\\n- Stack: n8n self-hosted, Notion/Apps Script, Python básico, Excel avanzado\\n- Pretensión: $1.200.000-$1.500.000 CLP bruto\\n- Disponibilidad: inmediata\\n\\nROLES OBJETIVO: Analista de Procesos, Analista de Automatización, Analista de Control de Gestión, Analista de Operaciones, Consultor de Procesos\\n\\nREGLAS:\\n- Máximo 5 postulaciones/día\\n- No postular a cargos con renta < $800.000 CLP\\n- Solo Santiago, Valparaíso o 100% remoto\\n- En Bioproterra: presentar siempre como Analista de Procesos y Sistemas (NO mencionar cofundador/gerente)\\n\\nCAPACIDADES ESPECIALES:\\n- Para buscar ofertas: emite [[EJECUTAR_BUSQUEDA]] en tu respuesta\\n- Para guardar memoria: emite [[GUARDAR_MEMORIA:{\\\"clave\\\":\\\"valor\\\",\\\"seccion\\\":\\\"X\\\"}]]\\n- Para enviar email: emite [[ENVIAR_CORREO:email@dest.com:Asunto del email]] seguido del cuerpo\\n- Para activar voz: emite [VOZ_ON] o [VOZ_OFF]\\n\\n${pendingPostulacion?'POSTULACIÓN PENDIENTE DE CONFIRMAR: '+JSON.stringify(pendingPostulacion):''}\\n${pendingEmail?'EMAIL PENDIENTE DE ENVIAR a '+pendingEmail.to+' - Asunto: '+pendingEmail.subject:''}\\n`;\n\nconst claudeBody=JSON.stringify({model:'llama-3.3-70b-versatile',max_tokens:800,messages:[{role:'system',content:SYSTEM},...history,{role:'user',content:finalUserContent}]});\nreturn[{json:{chatId,combinedText:finalUserContent,claudeBody,historyJson:JSON.stringify(history),hasPhoto,photoFileId,hasAudio,audioFileId,SYSTEM,isBuscar,isEmailIntent,emailDest,isPostularCmd,postularIdx,postularSearchKey:postularIdx?'SCRAPING-IDX:'+postularIdx+'-'+todayISO:null,pendingPostulacion:pendingPostulacion?JSON.stringify(pendingPostulacion):null,pendingEmail:pendingEmail?JSON.stringify(pendingEmail):null}}];",
+        "mode": "runOnceForAllItems"
+      }
+    },
+    {
+      "id": "wf2-n5",
+      "name": "IF Foto?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1180,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.photoFileId }}",
+              "operator": {
+                "operation": "notEmpty",
+                "type": "string"
+              },
+              "rightValue": ""
+            }
+          ],
+          "options": {}
+        }
+      }
+    },
+    {
+      "id": "wf2-n6",
+      "name": "Telegram: ruta foto",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1420,
+        120
+      ],
+      "parameters": {
+        "fileId": "={{ $json.photoFileId }}",
+        "operation": "get",
+        "resource": "file"
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "rE6bL40aCajtjgBJ",
+          "name": "Telegram Bot - SMR Job Agent"
+        }
+      },
+      "webhookId": "0c92b14d-3505-449a-be42-9f3bcc78c2d1"
+    },
+    {
+      "id": "wf2-n7",
+      "name": "Construir Request Vision",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1860,
+        120
+      ],
+      "parameters": {
+        "jsCode": "const telegramFile=$input.first().json;\nconst filePath=(telegramFile.result&&telegramFile.result.file_path)?telegramFile.result.file_path:'';\nconst n4=$('Soy el ultimo + Contexto').item.json;\nconst history=JSON.parse(n4.historyJson);\nconst combinedText=n4.combinedText||'Analiza esta imagen';\nif(!filePath){const claudeBody=JSON.stringify({model:'llama-3.3-70b-versatile',max_tokens:800,messages:[{role:'system',content:n4.SYSTEM},...history,{role:'user',content:'DEBUG:NO_FILE_PATH'}]});return[{json:{chatId:n4.chatId,combinedText,claudeBody,historyJson:n4.historyJson,visionBody:claudeBody}}];}\nconst imgUrl='https://n8n.proterra.info/webhook/img-proxy?file_path='+encodeURIComponent(filePath);\nconst visionBody=JSON.stringify({model:'meta-llama/llama-4-scout-17b-16e-instruct',max_tokens:800,messages:[{role:'system',content:n4.SYSTEM},...history,{role:'user',content:[{type:'image_url',image_url:{url:imgUrl}},{type:'text',text:combinedText}]}]});\nreturn[{json:{chatId:n4.chatId,combinedText,claudeBody:n4.claudeBody||visionBody,historyJson:n4.historyJson,visionBody}}];"
+      }
+    },
+    {
+      "id": "wf2-n8",
+      "name": "OpenRouter API Vision",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2080,
+        120
+      ],
+      "parameters": {
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer API_KEY_REDACTED"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "method": "POST",
+        "sendHeaders": true,
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.parse($json.visionBody) }}",
+        "contentType": "json",
+        "body": ""
+      }
+    },
+    {
+      "id": "wf2-n9",
+      "name": "IF Audio?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1180,
+        480
+      ],
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "c2",
+              "leftValue": "={{ $json.audioFileId }}",
+              "operator": {
+                "operation": "notEmpty",
+                "type": "string"
+              },
+              "rightValue": ""
+            }
+          ],
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          }
+        }
+      }
+    },
+    {
+      "id": "wf2-n10",
+      "name": "Telegram: ruta audio",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1420,
+        620
+      ],
+      "parameters": {
+        "fileId": "={{ $json.audioFileId }}",
+        "operation": "get",
+        "resource": "file"
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "rE6bL40aCajtjgBJ",
+          "name": "Telegram Bot - SMR Job Agent"
+        }
+      },
+      "webhookId": "7b875252-236a-43b9-856e-445c38bd1d47"
+    },
+    {
+      "id": "wf2-n11",
+      "name": "Descargar audio",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1640,
+        620
+      ],
+      "parameters": {
+        "method": "GET",
+        "options": {
+          "response": {
+            "response": {
+              "outputPropertyName": "audioData",
+              "responseFormat": "file"
+            }
+          }
+        },
+        "url": "={{ 'https://api.telegram.org/file/bot8652172900:AAFSHKQ7ADBT-RTq64RRWaT_w0asObdVdrI/' + (($json.result && $json.result.file_path) ? $json.result.file_path : ($json.file_path || '')) }}"
+      }
+    },
+    {
+      "id": "wf2-n12",
+      "name": "Groq Whisper",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1970,
+        620
+      ],
+      "parameters": {
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "whisper-large-v3-turbo"
+            },
+            {
+              "name": "language",
+              "value": "es"
+            },
+            {
+              "name": "response_format",
+              "value": "json"
+            },
+            {
+              "inputDataFieldName": "audioData",
+              "name": "file",
+              "parameterType": "formBinaryData"
+            }
+          ]
+        },
+        "contentType": "multipart-form-data",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer API_KEY_REDACTED"
+            }
+          ]
+        },
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "sendHeaders": true,
+        "url": "https://api.groq.com/openai/v1/audio/transcriptions"
+      }
+    },
+    {
+      "id": "wf2-n13",
+      "name": "Preparar Request Voz",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2100,
+        620
+      ],
+      "parameters": {
+        "jsCode": "const whisper=$input.first().json;const transcribed=whisper.text||'[audio no transcribible]';const n4=$('Soy el ultimo + Contexto').item.json;const history=JSON.parse(n4.historyJson);const userContent='[VOZ TRANSCRITA]: \"'+transcribed+'\"';const claudeBody=JSON.stringify({model:'openrouter/free',max_tokens:1500,messages:[{role:'system',content:n4.SYSTEM},...history,{role:'user',content:userContent}]});return[{json:{chatId:n4.chatId,combinedText:userContent,claudeBody,historyJson:n4.historyJson}}];"
+      }
+    },
+    {
+      "id": "wf2-n14",
+      "name": "OpenRouter API Texto",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2340,
+        480
+      ],
+      "parameters": {
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer API_KEY_REDACTED"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "method": "POST",
+        "sendHeaders": true,
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.parse($json.claudeBody) }}",
+        "authentication": "none",
+        "sendQuery": false,
+        "body": "",
+        "options": {},
+        "contentType": "json",
+        "retryOnFail": true,
+        "maxTries": 3,
+        "waitBetweenTries": 30000
+      }
+    },
+    {
+      "id": "wf2-n15",
+      "name": "Guardar historial",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2580,
+        300
+      ],
+      "parameters": {
+        "jsCode": "const n4=$('Soy el ultimo + Contexto').item.json;\nlet combinedText=n4.combinedText;\ntry{const inj=$('Inyectar oferta al prompt').item.json;if(inj&&inj.combinedText)combinedText=inj.combinedText;}catch(e){}\nlet response=$input.first().json?.choices?.[0]?.message?.content||'Error procesando tu mensaje.';\nif(response.length>3500)response=response.substring(0,3500)+'...';\nconst sd=$getWorkflowStaticData('global');\nif(!sd.conversations)sd.conversations={};\nif(!sd.pendingPostulacion)sd.pendingPostulacion={};\nif(!sd.pendingEmail)sd.pendingEmail={};\nif(!sd.voiceMode)sd.voiceMode={};\nlet pendingAction=null,memGuardarPayload=null,cleanResponse=response,triggerWF01=false;\n\nconst userTextRaw=(n4.combinedText||'').trim();\nconst CONFIRMAR_EMAIL=/^(si|s[í]|envialo|env[í]alo|si\\s+envialo|m[á]ndalo|mandalo|dale|hazlo|confirmar|ok|enviar|ya\\s+te\\s+dije|listo|hazlo|procede|confirmo)/i;\nconst CANCELAR_EMAIL=/^(no|cancelar|no\\s+gracias|cancelado)/i;\nconst n4pendingEmail=n4.pendingEmail?JSON.parse(n4.pendingEmail):null;\nconst n4pendingPostulacion=n4.pendingPostulacion?JSON.parse(n4.pendingPostulacion):null;\n\nif(n4pendingEmail&&!n4pendingPostulacion&&CONFIRMAR_EMAIL.test(userTextRaw)){\n  pendingAction={type:'SEND_EMAIL',data:n4pendingEmail};\n  delete sd.pendingEmail[n4.chatId];\n  cleanResponse='✅ Enviando correo a '+n4pendingEmail.to+'...';\n} else if(n4pendingEmail&&!n4pendingPostulacion&&CANCELAR_EMAIL.test(userTextRaw)){\n  delete sd.pendingEmail[n4.chatId];\n  cleanResponse='Correo cancelado.';\n} else {\n  const PREVIEW_REGEX=/\\[\\[PREVIEW_LISTO:([\\s\\S]*?)\\]\\]/;\n  const EJECUTAR_REGEX=/\\[\\[EJECUTAR_ENVIO\\]\\]/;\n  const GUARDAR_REGEX=/\\[\\[GUARDAR_MEMORIA:([\\s\\S]*?)\\]\\]/;\n  const BUSQUEDA_REGEX=/\\[\\[EJECUTAR_BUSQUEDA\\]\\]/;\n  const CORREO_REGEX=/\\[{1,2}(?:ENVIAR|EJECUTAR)_CORREO:([\\w.+\\-@]+):([^\\]\\n]+)\\]{1,2}/;\n  if(cleanResponse.includes('[VOZ_ON]')){sd.voiceMode[n4.chatId]=true;cleanResponse=cleanResponse.replace(/\\[VOZ_ON\\]/g,'').trim();}\n  if(cleanResponse.includes('[VOZ_OFF]')){sd.voiceMode[n4.chatId]=false;cleanResponse=cleanResponse.replace(/\\[VOZ_OFF\\]/g,'').trim();}\n  const guardarMatch=cleanResponse.match(GUARDAR_REGEX);\n  const previewMatch=cleanResponse.match(PREVIEW_REGEX);\n  const ejecutarMatch=cleanResponse.match(EJECUTAR_REGEX);\n  const correoMatch=cleanResponse.match(CORREO_REGEX);\n  if(guardarMatch){\n    const rawGuardar=guardarMatch[1].trim();\n    try{memGuardarPayload=JSON.parse(rawGuardar);}catch(e){memGuardarPayload={nota:rawGuardar.replace(/[{}\"]/g,'').trim().slice(0,500),seccion:'Notas de Comportamiento'};}\n    cleanResponse=cleanResponse.replace(GUARDAR_REGEX,'').trim();\n  }\n  if(previewMatch){try{const pd=JSON.parse(previewMatch[1]);sd.pendingPostulacion[n4.chatId]={...pd,chatId:n4.chatId,timestamp:Date.now()};cleanResponse=cleanResponse.replace(PREVIEW_REGEX,'').trim();}catch(e){}}\n  if(ejecutarMatch){const pending=sd.pendingPostulacion[n4.chatId]||null;if(pending){pendingAction={type:'SEND_APPLICATION',data:pending};delete sd.pendingPostulacion[n4.chatId];cleanResponse='Registrando postulacion en Notion...';}else{cleanResponse='No hay postulacion pendiente.';}}\n  const busquedaMatch=cleanResponse.match(BUSQUEDA_REGEX);\n  if(busquedaMatch){triggerWF01=true;cleanResponse=cleanResponse.replace(BUSQUEDA_REGEX,'').trim();}\n  if(correoMatch){\n    const emailTo=correoMatch[1].trim();\n    const emailSubject=correoMatch[2].trim();\n    let emailBody=cleanResponse.replace(CORREO_REGEX,'').trim();\n    emailBody=emailBody\n      .replace(/\\[{1,2}(?:ENVIAR|EJECUTAR)_CORREO[^\\]]*\\]{1,2}/g,'')\n      .replace(/<<<[^\\n]*/g,'')\n      .replace(/\\n{3,}/g,'\\n\\n')\n      .trim();\n    sd.pendingEmail[n4.chatId]={to:emailTo,subject:emailSubject,body:emailBody,chatId:n4.chatId,timestamp:Date.now()};\n    cleanResponse=emailBody;\n  }\n  cleanResponse=cleanResponse\n    .replace(/\\[{1,2}(?:ENVIAR|EJECUTAR)_CORREO:[^\\]\\n]+\\]{1,2}/g,'')\n    .replace(/\\[{1,2}EJECUTAR_BUSQUEDA\\]{1,2}/g,'')\n    .replace(/\\[{1,2}GUARDAR_MEMORIA\\s*:[^\\]]*\\]{1,2}/g,'')\n    .replace(/<<<[^>]*>>>/gs,'')\n    .replace(/<<<[^\\n]*/g,'')\n    .replace(/\\n{3,}/g,'\\n\\n')\n    .trim();\n}\n\nconst hasEmailPreview=!!sd.pendingEmail[n4.chatId];\nconst emailData=sd.pendingEmail[n4.chatId]||null;\nconst emailPreviewText=emailData?('📧 Para: '+emailData.to+'\\nAsunto: '+emailData.subject+'\\n\\n¿Envío este correo?'):null;\nconst hasAudio=n4.hasAudio===true;\nconst voiceModeActive=sd.voiceMode[n4.chatId]===true;\nconst isSimpleShort=cleanResponse.length<80&&!cleanResponse.includes('**')&&!cleanResponse.includes('\\n');\nlet responderConVoz=false;\nif(hasAudio)responderConVoz=true;\nelse if(voiceModeActive)responderConVoz=true;\nelse if(isSimpleShort&&Math.random()<0.4)responderConVoz=true;\nconst history=JSON.parse(n4.historyJson);\nconst newHistory=[...history,{role:'user',content:combinedText||'[audio]'},{role:'assistant',content:cleanResponse}];\nconst filteredHistory=newHistory.filter(entry=>{\n  const c=(entry.content||'').trim();\n  if(!c||c.length<3)return false;\n  if(/^\\[{1,2}[A-Z_]+[\\]:]/.test(c)&&c.length<100)return false;\n  if(c.includes('[USUARIO CONFIRMO')||c.includes('Emite [[EJECUTAR_CORREO]]'))return false;\n  return true;\n});\nsd.conversations[n4.chatId]=filteredHistory.slice(-16);\nconst hasPreview=hasEmailPreview&&!pendingAction;\nreturn[{json:{chatId:n4.chatId,response:cleanResponse,cleanResponse,responderConVoz,pendingAction:pendingAction?JSON.stringify(pendingAction):null,memGuardarPayload:memGuardarPayload?JSON.stringify(memGuardarPayload):null,triggerWF01,hasPreview,hasEmailPreview:hasPreview,emailPreviewText}}];"
+      }
+    },
+    {
+      "id": "wf2-n16",
+      "name": "Enviar respuesta",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2820,
+        300
+      ],
+      "parameters": {
+        "additionalFields": {
+          "parse_mode": "",
+          "appendAttribution": false
+        },
+        "chatId": "={{ $json.chatId }}",
+        "operation": "sendMessage",
+        "resource": "message",
+        "text": "={{ ($json.cleanResponse || $json.response || '').replace(/\\[{1,2}(?:ENVIAR|EJECUTAR)_CORREO:[^\\]\\n]+\\]{1,2}/g, '').replace(/<<<[^\\n]*/g, '').replace(/\\n{3,}/g, '\\n\\n').trim() }}",
+        "appendAttribution": false
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "rE6bL40aCajtjgBJ",
+          "name": "Telegram Bot - SMR Job Agent"
+        }
+      },
+      "webhookId": "dc50adf4-3498-4d1d-8898-df0bab2ca783"
+    },
+    {
+      "id": "wf2-cmd-if",
+      "name": "Es postular N?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        960,
+        480
+      ],
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "cp1",
+              "leftValue": "={{ $json.isPostularCmd }}",
+              "operator": {
+                "operation": "equal",
+                "type": "boolean"
+              },
+              "rightValue": true
+            }
+          ],
+          "options": {}
+        }
+      }
+    },
+    {
+      "id": "wf2-notion-q",
+      "name": "Consultar oferta en Notion",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1180,
+        620
+      ],
+      "parameters": {
+        "authentication": "predefinedCredentialType",
+        "contentType": "json",
+        "jsonBody": "={{ JSON.stringify({ filter: { property: 'Observaciones', rich_text: { contains: $json.postularSearchKey || '' } }, page_size: 1 }) }}",
+        "method": "POST",
+        "nodeCredentialType": "notionApi",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "url": "https://api.notion.com/v1/databases/2d03b76e-193b-8087-83c6-fae54ef2fe08/query"
+      },
+      "credentials": {
+        "notionApi": {
+          "id": "jYJowf8nddngCyk0",
+          "name": "Notion - Agente Laboral"
+        }
+      }
+    },
+    {
+      "id": "wf2-inject",
+      "name": "Inyectar oferta al prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1400,
+        620
+      ],
+      "parameters": {
+        "jsCode": "const nr=$input.first().json;\nconst n4=$('Soy el ultimo + Contexto').item.json;\nconst pages=(nr.results||[]);\nlet offerContext='';\nlet notionPageId=null;\nif(pages.length>0){\n  const page=pages[0];\n  const props=page.properties||{};\n  const cargo=(props['Nombre']?.title||[]).map(t=>t.plain_text).join('')||'Sin cargo';\n  notionPageId=page.id;\n  offerContext='\\n\\n[OFERTA PARA POSTULAR #'+n4.postularIdx+']\\nCargo: '+cargo+'\\nNotionPageId: '+notionPageId;\n}else{\n  offerContext='\\n\\n[No se encontro oferta #'+n4.postularIdx+'. Informa al usuario.]';\n}\nconst finalContent=n4.combinedText+offerContext;\nconst history=JSON.parse(n4.historyJson);\nconst claudeBody=JSON.stringify({model:'openrouter/free',max_tokens:2000,system:n4.SYSTEM,messages:[...history,{role:'user',content:finalContent}]});\nreturn[{json:{chatId:n4.chatId,combinedText:finalContent,claudeBody,historyJson:n4.historyJson,notionPageId}}];",
+        "mode": "runOnceForAllItems"
+      }
+    },
+    {
+      "id": "wf2-n17",
+      "name": "Hay accion pendiente?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2820,
+        480
+      ],
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "ca1",
+              "leftValue": "={{ $json.pendingAction }}",
+              "operator": {
+                "operation": "notEmpty",
+                "type": "string"
+              },
+              "rightValue": ""
+            }
+          ],
+          "options": {}
+        }
+      }
+    },
+    {
+      "id": "wf2-n18",
+      "name": "Preparar datos WF-03",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3040,
+        360
+      ],
+      "parameters": {
+        "jsCode": "// Parse pendingAction (may arrive as string or object)\nlet action = $json.pendingAction || {};\nif (typeof action === 'string') {\n  try { action = JSON.parse(action); } catch(e) { action = {}; }\n}\n\nconst chatId = $json.chatId;\nconst d = action.data || {};\n\nlet payload = {\n  chatId: chatId,\n  score: 0,\n  portal: 'Bot Telegram',\n  region: 'Santiago',\n  probabilidad: 'Media',\n  prioridad: 'Normal'\n};\n\nif (action.type === 'SEND_EMAIL') {\n  const to = (d.to && d.to !== 'DESTINATARIO' && d.to.includes('@')) ? d.to : '';\n  payload.jobTitle = (d.to && d.to.includes('@')) ? d.to : (d.subject || 'Correo enviado');\n  payload.company = to;\n  payload.recipientEmail = to;\n  payload.emailBody = d.body || '';\n  payload.emailSubject = d.subject || '';\n  payload.link = '';\n  payload.metodo = 'Email directo';\n  payload.estado = 'Enviado';\n  payload.observaciones = 'Correo enviado desde el asistente Telegram.\\n\\n--- CUERPO DEL CORREO ---\\n' + (d.body || '');\n  payload.recordType = 'email';\n} else if (action.type === 'SEND_APPLICATION') {\n  payload.jobTitle = d.cargo || 'Sin cargo';\n  payload.company = d.empresa || '';\n  payload.recipientEmail = d.emailDestino || '';\n  payload.emailBody = d.body || '';\n  payload.emailSubject = d.subject || '';\n  payload.link = d.link || '';\n  payload.metodo = 'Email directo';\n  payload.estado = 'Enviado';\n  payload.observaciones = d.observaciones || '';\n  payload.recordType = 'postulacion';\n} else {\n  payload.jobTitle = 'Registro bot';\n  payload.company = '';\n  payload.recipientEmail = '';\n  payload.emailBody = '';\n  payload.link = '';\n  payload.metodo = 'Bot';\n  payload.estado = 'Registrado';\n  payload.observaciones = JSON.stringify(action);\n  payload.recordType = 'other';\n}\n\nreturn [{ json: payload }];",
+        "mode": "runOnceForAllItems"
+      }
+    },
+    {
+      "id": "wf2-n19",
+      "name": "Registrar en Notion via WF-03",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3560,
+        360
+      ],
+      "parameters": {
+        "contentType": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "url": "https://n8n.proterra.info/webhook/registrar-postulacion"
+      }
+    },
+    {
+      "id": "wf2-n20",
+      "name": "Enviar email generado",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        3760,
+        360
+      ],
+      "parameters": {
+        "additionalFields": {
+          "disable_web_page_preview": true,
+          "parse_mode": "Markdown",
+          "appendAttribution": false
+        },
+        "appendAttribution": false,
+        "chatId": "={{ $('Preparar datos WF-03').item.json.chatId }}",
+        "operation": "sendMessage",
+        "resource": "message",
+        "text": "Postulacion registrada en Notion. Copia el email y envialo desde contacto@simonmarin.com"
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "rE6bL40aCajtjgBJ",
+          "name": "Telegram Bot - SMR Job Agent"
+        }
+      },
+      "webhookId": "7e18c378-137f-4977-8c44-39f4215a6ad1"
+    },
+    {
+      "id": "wf2-mem-read",
+      "name": "Leer Memoria Agente",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        700,
+        500
+      ],
+      "parameters": {
+        "authentication": "predefinedCredentialType",
+        "method": "POST",
+        "nodeCredentialType": "notionApi",
+        "options": {},
+        "sendBody": true,
+        "url": "https://api.notion.com/v1/databases/3313b76e-193b-8006-aa1c-edfcd7846e5b/query",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer API_KEY_REDACTED"
+            },
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "{\"filter\":{\"property\":\"Activo\",\"checkbox\":{\"equals\":true}},\"sorts\":[{\"property\":\"Fecha\",\"direction\":\"descending\"}],\"page_size\":30}"
+      },
+      "credentials": {
+        "notionApi": {
+          "id": "jYJowf8nddngCyk0",
+          "name": "Notion - Agente Laboral"
+        }
+      }
+    },
+    {
+      "id": "wf2-mem-extract",
+      "name": "Extraer Texto Memoria",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        940,
+        500
+      ],
+      "parameters": {
+        "jsCode": "const data=$input.first().json;\nconst results=data.results||[];\nif(!results.length){\n  const upstream=$('Esperar 2.5s').first().json;\n  return[{json:{memoriaTexto:'[Memoria vacia]',execId:upstream.execId,chatId:upstream.chatId,msgTimestamp:upstream.msgTimestamp}}];\n}\nconst grupos={};\nfor(const page of results){\n  const props=page.properties||{};\n  const seccion=(props['Sección']?.select?.name)||'General';\n  const nota=(props['Nota']?.rich_text?.[0]?.plain_text)||'';\n  const fecha=(props['Fecha']?.date?.start)||'';\n  const titulo=(props['Name']?.title?.[0]?.plain_text)||nota.substring(0,50);\n  if(!nota)continue;\n  if(!grupos[seccion])grupos[seccion]=[];\n  grupos[seccion].push(fecha?`[${fecha}] ${titulo}: ${nota}`:`${titulo}: ${nota}`);\n}\nconst lines=[];\nfor(const[sec,items]of Object.entries(grupos)){\n  lines.push(`=== ${sec} ===`);\n  items.forEach(i=>lines.push(i));\n}\nconst memoriaTexto=lines.length?lines.join('\\n'):'[Memoria vacia]';\nconst upstream=$('Esperar 2.5s').first().json;\nreturn[{json:{memoriaTexto,execId:upstream.execId,chatId:upstream.chatId,msgTimestamp:upstream.msgTimestamp}}];",
+        "mode": "runOnceForAllItems"
+      }
+    },
+    {
+      "id": "wf2-mem-save-if",
+      "name": "Hay memoria a guardar?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2820,
+        620
+      ],
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "mem-cond",
+              "leftValue": "={{ $json.memGuardarPayload }}",
+              "operator": {
+                "operation": "notEmpty",
+                "type": "string"
+              },
+              "rightValue": ""
+            }
+          ],
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          }
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "wf2-mem-save-build",
+      "name": "Preparar bloque memoria",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3040,
+        620
+      ],
+      "parameters": {
+        "jsCode": "const payload=JSON.parse($input.first().json.memGuardarPayload||'{}');\nconst seccion=payload.seccion||'Notas de Comportamiento';\nconst nota=payload.nota||'';\nconst titulo=nota.length>60?nota.substring(0,57)+'...':nota;\nconst hoy=new Date().toISOString().split('T')[0];\nconst body={parent:{database_id:'3313b76e-193b-8006-aa1c-edfcd7846e5b'},properties:{Nombre:{title:[{text:{content:titulo}}]},'Sección':{select:{name:seccion}},Nota:{rich_text:[{text:{content:nota}}]},Fecha:{date:{start:hoy}},Activo:{checkbox:true}}};\nreturn[{json:{bodyNotion:JSON.stringify(body)}}];",
+        "mode": "runOnceForAllItems"
+      }
+    },
+    {
+      "id": "wf2-mem-save-http",
+      "name": "Escribir en Memoria Notion",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3260,
+        620
+      ],
+      "parameters": {
+        "authentication": "predefinedCredentialType",
+        "contentType": "raw",
+        "method": "POST",
+        "nodeCredentialType": "notionApi",
+        "options": {},
+        "sendBody": true,
+        "url": "https://api.notion.com/v1/pages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer API_KEY_REDACTED"
+            },
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "rawContentType": "application/json",
+        "body": "={{ $json.bodyNotion }}"
+      },
+      "credentials": {
+        "notionApi": {
+          "id": "jYJowf8nddngCyk0",
+          "name": "Notion - Agente Laboral"
+        }
+      }
+    },
+    {
+      "id": "wf2-normalizar-audio",
+      "name": "Normalizar audio",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1750,
+        620
+      ],
+      "parameters": {
+        "jsCode": "const item=$input.first();\nconst binary=item.binary||{};\nconst audioData=binary.audioData||binary.data;\nif(!audioData)return[{json:item.json,binary}];\nconst baseName=(audioData.fileName||'audio.oga').replace(/\\.oga$/i,'.ogg');\nreturn[{json:item.json,binary:{...binary,audioData:{...audioData,mimeType:'audio/ogg',fileExtension:'ogg',fileName:baseName}}}];",
+        "mode": "runOnceForAllItems"
+      }
+    },
+    {
+      "id": "wf2-voz-if",
+      "name": "Decidir formato",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2820,
+        120
+      ],
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "v1",
+              "leftValue": "={{ $json.responderConVoz }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "options": {}
+        }
+      }
+    },
+    {
+      "id": "wf2-piper-tts",
+      "name": "ElevenLabs TTS",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        3060,
+        40
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.elevenlabs.io/v1/text-to-speech/cjVigY5qzO86Huf0OWal?output_format=opus_48000_32",
+        "sendBody": true,
+        "contentType": "raw",
+        "options": {
+          "response": {
+            "response": {
+              "outputPropertyName": "data",
+              "responseFormat": "file"
+            }
+          }
+        },
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({text: $json.responseTTS, model_id: 'eleven_turbo_v2_5'}) }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "xi-api-key",
+              "value": "ELEVENLABS_KEY_REDACTED"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "wf2-enviar-voz",
+      "name": "Enviar voz Telegram",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        3280,
+        40
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/bot8652172900:AAFSHKQ7ADBT-RTq64RRWaT_w0asObdVdrI/sendVoice",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formData",
+              "name": "chat_id",
+              "value": "={{ $('Guardar historial').first().json.chatId }}"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "voice",
+              "inputDataFieldName": "data"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "wf2-clean-tts",
+      "name": "Limpiar texto TTS",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2840,
+        40
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const item=$input.first().json;\nlet t=item.response||'';\nt=t.replace(/\\*\\*([^*]+)\\*\\*/g,'$1').replace(/\\*([^*]+)\\*/g,'$1').replace(/^[-*]\\s+/gm,'').replace(/^\\d+\\.\\s+/gm,'').replace(/^#+\\s+/gm,'').replace(/`[^`]+`/g,'').replace(/\\n{2,}/g,'\\n').replace(/\\s{2,}/g,' ').trim();\nreturn[{json:{...item,responseTTS:t}}];"
+      }
+    },
+    {
+      "id": "wf2-buscar-if",
+      "name": "Disparar WF-01?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3060,
+        200
+      ],
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "b1",
+              "leftValue": "={{ $json.triggerWF01 }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "options": {}
+        }
+      }
+    },
+    {
+      "id": "wf2-trigger-wf01",
+      "name": "Trigger WF-01 Búsqueda",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [
+        3280,
+        120
+      ],
+      "parameters": {
+        "workflowId": "XnyWVCKuFSvWGPqA",
+        "waitForSubWorkflow": false
+      }
+    },
+    {
+      "id": "wf2-buscar-check",
+      "name": "¿Es buscar?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1140,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "buscar-cond-1",
+              "leftValue": "={{ $json.isBuscar }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "options": {}
+        }
+      }
+    },
+    {
+      "id": "wf2-aviso-buscar",
+      "name": "Avisar Buscando",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1380,
+        160
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $json.chatId }}",
+        "text": "Iniciando busqueda en todos los portales. Te aviso cuando encuentre ofertas.",
+        "additionalFields": {
+          "parse_mode": "Markdown",
+          "appendAttribution": false
+        },
+        "appendAttribution": false
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "rE6bL40aCajtjgBJ",
+          "name": "Telegram Bot - SMR Job Agent"
+        }
+      },
+      "webhookId": "bfb1fff0-a9a0-446d-833f-234f0d7e4b6c"
+    },
+    {
+      "id": "wf2-has-preview",
+      "name": "Tiene Preview?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2580,
+        500
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "preview-check",
+              "leftValue": "={{ $json.hasPreview }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "wf2-send-buttons",
+      "name": "Enviar Botones Email",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2820,
+        500
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $json.chatId }}",
+        "text": "={{ $json.emailPreviewText || '📧 ¿Envío este correo?' }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "Markdown",
+          "replyMarkup": "inlineKeyboard",
+          "inlineKeyboard": {
+            "rows": [
+              {
+                "row": {
+                  "buttons": [
+                    {
+                      "text": "✅ Enviar correo",
+                      "additionalFields": {
+                        "callbackData": "confirm_email"
+                      }
+                    },
+                    {
+                      "text": "❌ Cancelar",
+                      "additionalFields": {
+                        "callbackData": "cancel_email"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        "appendAttribution": false
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "rE6bL40aCajtjgBJ",
+          "name": "Telegram Bot - SMR Job Agent"
+        }
+      },
+      "webhookId": "4a73e6f3-4940-48d7-864e-e9c978ed7ae1"
+    },
+    {
+      "id": "wf2-typing-1",
+      "name": "Typing: recibido",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        590,
+        480
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendChatAction",
+        "chatId": "={{ $json.chatId }}",
+        "action": "typing",
+        "additionalFields": {}
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "rE6bL40aCajtjgBJ",
+          "name": "Telegram Bot - SMR Job Agent"
+        }
+      },
+      "webhookId": "67705433-39d5-4795-b623-f4291b0265f9"
+    },
+    {
+      "id": "wf2-typing-2",
+      "name": "Typing: procesando",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2200,
+        500
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendChatAction",
+        "chatId": "={{ $json.chatId }}",
+        "action": "typing",
+        "additionalFields": {}
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "rE6bL40aCajtjgBJ",
+          "name": "Telegram Bot - SMR Job Agent"
+        }
+      },
+      "webhookId": "affb480b-11ed-4d5c-8c4d-9eca8b7b928c"
+    },
+    {
+      "id": "wf2-smtp-send",
+      "name": "Enviar Email SMTP",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        3400,
+        240
+      ],
+      "parameters": {
+        "fromEmail": "\"Simón Marín Rojas\" <contacto@simonmarin.com>",
+        "toEmail": "={{ $json.recipientEmail }}",
+        "subject": "={{ $json.emailSubject || 'Presentación profesional - Simón Marín Rojas' }}",
+        "html": "=<html><head><meta charset=\"UTF-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><style>body{margin:0;padding:0;background:#f0f4f8}a{text-decoration:none}img{border:0;display:block}@media only screen and (max-width:600px){.wrapper{width:100%!important;border-radius:0!important}.body-pad{padding:24px 20px!important}.sig-pad{padding:20px 16px!important}.sig-name{font-size:13pt!important}.banner-img{max-width:140px!important;height:32px!important}}</style></head><body><center><table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#f0f4f8;padding:20px 0\"><tr><td align=\"center\"><table class=\"wrapper\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"max-width:600px;width:100%;background:#ffffff;border-radius:10px;overflow:hidden;box-shadow:0 2px 16px rgba(0,0,0,0.10)\"><tr><td style=\"padding:36px 40px 24px 40px;border-bottom:2px solid #0d2137\"><p style=\"margin:0 0 5px 0;font-family:Georgia,serif;font-size:18pt;font-weight:bold;color:#0d2137;letter-spacing:0.5px;\">SIMÓN MARÍN ROJAS</p><p style=\"margin:0;font-family:Arial,sans-serif;font-size:9.5pt;color:#4a6a8a;\">Ingeniero Comercial &nbsp;·&nbsp; Analista de Procesos y Automatización</p></td></tr><tr><td class=\"body-pad\" style=\"padding:32px 40px 28px 40px;font-family:Georgia,serif;font-size:11pt;color:#1a1a1a;line-height:1.8;\">{{ ($json.emailBody || '').replace(/\\n/g,\"<br>\") }}</td></tr><tr><td class=\"sig-pad\" style=\"background:#f7f9fc;border-top:1px solid #e8eef5;padding:24px 32px;text-align:center\"><img src=\"http://simonmarin.com/wp-content/uploads/2026/03/Simon-Marin.png\" width=\"82\" height=\"82\" alt=\"Simón Marín\" style=\"border-radius:50%;border:3px solid #ffffff;box-shadow:0 0 0 3px #0d2137;display:inline-block;margin-bottom:12px\"><p class=\"sig-name\" style=\"margin:0 0 3px 0;font-family:Georgia,serif;font-size:13pt;font-weight:bold;color:#0d2137;\">Simón Marín Rojas</p><p style=\"margin:0 0 5px 0;font-family:Arial,sans-serif;font-size:8.5pt;color:#4a6a8a;\">Ingeniero Comercial | Analista de Procesos y Automatización</p><p style=\"margin:0 0 12px 0;font-family:Arial,sans-serif;font-size:8.5pt;color:#666666\"><a href=\"mailto:contacto@simonmarin.com\" style=\"color:#1a6cb5;\">contacto@simonmarin.com</a> &nbsp;·&nbsp; +56 9 8401 3356 &nbsp;·&nbsp; Santiago, Chile</p><a href=\"https://reuniones.smr.bz/expert/simon.marin?start=scheduling\"><img src=\"http://simonmarin.com/wp-content/uploads/2026/02/AGENDAR-REUNION.gif\" height=\"34\" alt=\"Agendar Reunión\" style=\"display:inline-block;max-width:220px;\"></a></td></tr><tr><td style=\"background:#0d2137;padding:16px 24px;text-align:center\"><a href=\"https://simonmarin.com/\"><img class=\"banner-img\" src=\"http://simonmarin.com/wp-content/uploads/2026/03/Banner_Blanco_SMR-X-297-X-68.png\" height=\"40\" alt=\"SMR\" style=\"display:inline-block;max-width:180px;margin-bottom:14px;\"></a><br><table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\"><tr><td align=\"center\"><a href=\"https://simonmarin.com/\" style=\"margin:0 7px;display:inline-block;vertical-align:middle\"><img src=\"http://simonmarin.com/wp-content/uploads/2026/03/www.png\" width=\"30\" height=\"30\" alt=\"Web\"></a><a href=\"https://www.linkedin.com/in/simon-marin-rojas-perfil/\" style=\"margin:0 7px;display:inline-block;vertical-align:middle\"><img src=\"http://simonmarin.com/wp-content/uploads/2026/03/linkedin.png\" width=\"30\" height=\"30\" alt=\"LinkedIn\"></a><a href=\"https://api.whatsapp.com/send/?phone=56984013356&amp;text=Hola,+buen+d%C3%ADa.+Quisiera+obtener+m%C3%A1s+informaci%C3%B3n.+Quedo+atento,+gracias.&amp;type=phone_number&amp;app_absent=0\" style=\"margin:0 7px;display:inline-block;vertical-align:middle\"><img src=\"http://simonmarin.com/wp-content/uploads/2026/03/wsp.png\" width=\"30\" height=\"30\" alt=\"WhatsApp\"></a><a href=\"mailto:contacto@simonmarin.com\" style=\"margin:0 7px;display:inline-block;vertical-align:middle\"><img src=\"http://simonmarin.com/wp-content/uploads/2026/03/@.png\" width=\"30\" height=\"30\" alt=\"Email\"></a></td></tr></table></td></tr><tr><td style=\"background:#b8975a;padding:8px 24px;text-align:center\"><p style=\"margin:0;font-family:Arial,sans-serif;font-size:8.5pt;color:#ffffff;font-style:italic;letter-spacing:0.6px;\">Convierto la complejidad diaria en decisiones claras</p></td></tr></table></td></tr></table></center></body></html>",
+        "options": {
+          "appendAttribution": false
+        },
+        "message": "",
+        "emailFormat": "html"
+      },
+      "credentials": {
+        "smtp": {
+          "id": "PzG1HDuy5xJlmEQ5",
+          "name": "Hostinger SMTP - Simón"
+        }
+      },
+      "webhookId": "a2dd60d6-83d9-4890-ae6f-73fee0c9d734"
+    },
+    {
+      "id": "wf2-check-recipient",
+      "name": "Tiene destinatario?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3160,
+        360
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-email",
+              "leftValue": "={{ $json.recipientEmail }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "OpenRouter API Texto": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Guardar historial",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "OpenRouter API Vision": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Guardar historial",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Construir Request Vision": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "OpenRouter API Vision",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Consultar oferta en Notion": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Inyectar oferta al prompt",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Descargar audio": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Normalizar audio",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Detectar tipo + Encolar": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Esperar 2.5s",
+            "type": "main"
+          },
+          {
+            "node": "Typing: recibido",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Es postular N?": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Consultar oferta en Notion",
+            "type": "main"
+          }
+        ],
+        [
+          {
+            "index": 0,
+            "node": "IF Foto?",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Esperar 2.5s": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Leer Memoria Agente",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Extraer Texto Memoria": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Soy el ultimo + Contexto",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Groq Whisper": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Preparar Request Voz",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Guardar historial": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Hay accion pendiente?",
+            "type": "main"
+          },
+          {
+            "index": 0,
+            "node": "Hay memoria a guardar?",
+            "type": "main"
+          },
+          {
+            "node": "Decidir formato",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Disparar WF-01?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Tiene Preview?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hay accion pendiente?": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Preparar datos WF-03",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Hay memoria a guardar?": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Preparar bloque memoria",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "IF Audio?": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Telegram: ruta audio",
+            "type": "main"
+          }
+        ],
+        [
+          {
+            "index": 0,
+            "node": "Typing: procesando",
+            "type": "main"
+          },
+          {
+            "index": 0,
+            "node": "OpenRouter API Texto",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "IF Foto?": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Telegram: ruta foto",
+            "type": "main"
+          }
+        ],
+        [
+          {
+            "index": 0,
+            "node": "IF Audio?",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Inyectar oferta al prompt": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "OpenRouter API Texto",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Leer Memoria Agente": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Extraer Texto Memoria",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Normalizar audio": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Groq Whisper",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Preparar Request Voz": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "OpenRouter API Texto",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Preparar bloque memoria": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Escribir en Memoria Notion",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Registrar en Notion via WF-03": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Enviar email generado",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Telegram: ruta audio": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Descargar audio",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Telegram: ruta foto": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Construir Request Vision",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Telegram: todos los mensajes": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Detectar tipo + Encolar",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Decidir formato": {
+      "main": [
+        [
+          {
+            "node": "Limpiar texto TTS",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Enviar respuesta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ElevenLabs TTS": {
+      "main": [
+        [
+          {
+            "node": "Enviar voz Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Limpiar texto TTS": {
+      "main": [
+        [
+          {
+            "node": "ElevenLabs TTS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Disparar WF-01?": {
+      "main": [
+        [
+          {
+            "node": "Trigger WF-01 Búsqueda",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Soy el ultimo + Contexto": {
+      "main": [
+        [
+          {
+            "node": "¿Es buscar?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Es buscar?": {
+      "main": [
+        [
+          {
+            "node": "Avisar Buscando",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Es postular N?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Avisar Buscando": {
+      "main": [
+        [
+          {
+            "node": "Trigger WF-01 Búsqueda",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tiene Preview?": {
+      "main": [
+        [
+          {
+            "node": "Enviar Botones Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar datos WF-03": {
+      "main": [
+        [
+          {
+            "node": "Tiene destinatario?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tiene destinatario?": {
+      "main": [
+        [
+          {
+            "node": "Enviar Email SMTP",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Registrar en Notion via WF-03",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enviar Email SMTP": {
+      "main": [
+        [
+          {
+            "node": "Registrar en Notion via WF-03",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false,
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "I3orjxloJLGwQYj4"
+  },
+  "staticData": {
+    "global": {
+      "conversations": {
+        "8298437242": [
+          {
+            "role": "user",
+            "content": "envía un correo de presentación a simon.ariel2099@gmail.com"
+          },
+          {
+            "role": "assistant",
+            "content": "Estimado equipo de selección,\n\nSoy Simón Marín Rojas, Ingeniero Comercial especializado en procesos y automatización, y les escribo para presentar mi candidatura a roles de Especialista en Automatización, Analista de Procesos o posiciones de transformación digital.\n\nEn Bioproterra, como Analista de Proces"
+          },
+          {
+            "role": "user",
+            "content": "no replantea el correo"
+          },
+          {
+            "role": "assistant",
+            "content": "Estimado equipo de selección,\n\nSoy Simón Marín Rojas, Ingeniero Comercial especializado en procesos y automatización, y les escribo para presentar mi candidatura a roles de Especialista en Automatización, Analista de Procesos o cargos de transformación digital.\n\nEn mi gestión como Analista de Procesos y Sistemas en Bioproterra, logré automatizar más del 75% de los flujos operativos clave mediante n8n y Google Apps Script, implementé un ERP completo desde cero en Notion para centralizar la gestión de la empresa, y administro mi propio VPS para garantizar la estabilidad de soluciones críticas. Estas iniciativas permitieron escalar la capacidad operativa sin aumentar costos fijos.\n\nCuento con disponibilidad inmediata para incorporarme y estoy listo para analizar sus necesidades actuales de optimización. Quedo atento a su respuesta para coordinar una reunión.\n\nSaludos cordiales,"
+          },
+          {
+            "role": "user",
+            "content": "[audio]"
+          },
+          {
+            "role": "assistant",
+            "content": "Estimado equipo de selección,\n\nSoy Simón Marín Rojas, Ingeniero Comercial especializado en procesos y automatización, y les escribo para presentar mi candidatura a roles de Especialista en Automatización, Analista de Procesos o cargos de transformación digital.\n\nEn mi gestión como Analista de Procesos y Sistemas en Bioproterra, logré automatizar más del 75% de los flujos operativos clave mediante n8n y Google Apps Script, implementé un ERP completo desde cero en Notion para centralizar la gestión de la empresa, y administro mi propio VPS para garantizar la estabilidad de soluciones críticas. Estas iniciativas permitieron escalar la capacidad operativa sin aumentar costos fijos.\n\nCuento con disponibilidad inmediata para incorporarme y estoy listo para analizar sus necesidades actuales de optimización. Quedo atento a su respuesta para coordinar una reunión.\n\nSaludos cordiales,"
+          },
+          {
+            "role": "user",
+            "content": "[audio]"
+          },
+          {
+            "role": "assistant",
+            "content": "Estimado equipo de selección,\n\nSoy Simón Marín Rojas, Ingeniero Comercial especializado en procesos y automatización, y les escribo para presentar mi candidatura a roles de Especialista en Automatización, Analista de Procesos o cargos de transformación digital.\n\nEn mi gestión como Analista de Procesos y Sistemas en Bioproterra, logré automatizar más del 75% de los flujos operativos clave mediante n8n y Google Apps Script, implementé un ERP completo desde cero en Notion para centralizar la gestión de la empresa, y administro mi propio VPS para garantizar la estabilidad de soluciones críticas. Estas iniciativas permitieron escalar la capacidad operativa sin aumentar costos fijos.\n\nCuento con disponibilidad inmediata para incorporarme y estoy listo para analizar sus necesidades actuales de optimización. Quedo atento a su respuesta para coordinar una reunión.\n\nSaludos cordiales,"
+          },
+          {
+            "role": "user",
+            "content": "[audio]"
+          },
+          {
+            "role": "assistant",
+            "content": "Estimado equipo de selección,\n\nSoy Simón Marín Rojas, Ingeniero Comercial especializado en procesos y automatización, y les escribo para presentar mi candidatura a roles de Especialista en Automatización, Analista de Procesos o cargos de transformación digital.\n\nEn mi gestión como Analista de Procesos y Sistemas en Bioproterra, logré automatizar más del 75% de los flujos operativos clave mediante n8n y Google Apps Script, implementé un ERP completo desde cero en Notion para centralizar la gestión de la empresa, y administro mi propio VPS para garantizar la estabilidad de soluciones críticas. Estas iniciativas permitieron escalar la capacidad operativa sin aumentar costos fijos.\n\nCuento con disponibilidad inmediata para incorporarme y estoy listo para analizar sus necesidades actuales de optimización. Quedo atento a su respuesta para coordinar una reunión.\n\nSaludos cordiales,"
+          }
+        ]
+      },
+      "lastGreeting": {
+        "8298437242": "06-04-2026"
+      },
+      "queues": {
+        "8298437242": [
+          {
+            "text": "envía un correo de presentación a simon.ariel2099@gmail.com",
+            "timestamp": 1775453401969,
+            "processed": true,
+            "mediaType": "text",
+            "fileId": null
+          },
+          {
+            "text": "si",
+            "timestamp": 1775453448846,
+            "processed": true,
+            "mediaType": "text",
+            "fileId": null
+          },
+          {
+            "text": "no me envies audios",
+            "timestamp": 1775453485154,
+            "processed": true,
+            "mediaType": "text",
+            "fileId": null
+          },
+          {
+            "text": "envía un correo de presentación a simon.ariel2099@gmail.com",
+            "timestamp": 1775454035323,
+            "processed": true,
+            "mediaType": "text",
+            "fileId": null
+          },
+          {
+            "text": "si",
+            "timestamp": 1775454051221,
+            "processed": true,
+            "mediaType": "text",
+            "fileId": null
+          },
+          {
+            "text": "envía un correo de presentación a simon.ariel2099@gmail.com",
+            "timestamp": 1775454666080,
+            "processed": true,
+            "mediaType": "text",
+            "fileId": null
+          },
+          {
+            "text": "si",
+            "timestamp": 1775454680499,
+            "processed": true,
+            "mediaType": "text",
+            "fileId": null
+          },
+          {
+            "text": "guarda en tu memoria que nunca debes colocar la firma en los correo que te solicito redactar, debes terminar con el saludo, más un par de saltos de linea, ya que en la plantilla html que utilizas para enviar el correo ya viene incluido la firma",
+            "timestamp": 1775454849536,
+            "processed": true,
+            "mediaType": "text",
+            "fileId": null
+          },
+          {
+            "text": "si",
+            "timestamp": 1775455445546,
+            "processed": true,
+            "mediaType": "text",
+            "fileId": null
+          },
+          {
+            "text": "envía un correo de presentación a simon.ariel2099@gmail.com",
+            "timestamp": 1775455751186,
+            "processed": true,
+            "mediaType": "text",
+            "fileId": null
+          },
+          {
+            "text": "envialo",
+            "timestamp": 1775455800124,
+            "processed": true,
+            "mediaType": "text",
+            "fileId": null
+          },
+          {
+            "text": "no se ha enviado",
+            "timestamp": 1775456004771,
+            "processed": true,
+            "mediaType": "text",
+            "fileId": null
+          },
+          {
+            "text": "si",
+            "timestamp": 1775456031597,
+            "processed": true,
+            "mediaType": "text",
+            "fileId": null
+          },
+          {
+            "text": "envía un correo de presentación a simon.ariel2099@gmail.com",
+            "timestamp": 1775457783040,
+            "processed": true,
+            "mediaType": "text",
+            "fileId": null
+          },
+          {
+            "text": "no replantea el correo",
+            "timestamp": 1775457818942,
+            "processed": true,
+            "mediaType": "text",
+            "fileId": null
+          },
+          {
+            "text": "si",
+            "timestamp": 1775457873716,
+            "processed": true,
+            "mediaType": "text",
+            "fileId": null
+          },
+          {
+            "text": "lo enviaste?",
+            "timestamp": 1775458518579,
+            "processed": false,
+            "mediaType": "text",
+            "fileId": null
+          },
+          {
+            "text": "envía un correo de presentación a simon.ariel2099@gmail.com",
+            "timestamp": 1775459069961,
+            "processed": false,
+            "mediaType": "text",
+            "fileId": null
+          },
+          {
+            "text": "si",
+            "timestamp": 1775459078558,
+            "processed": false,
+            "mediaType": "text",
+            "fileId": null
+          },
+          {
+            "text": "si",
+            "timestamp": 1775459099514,
+            "processed": false,
+            "mediaType": "text",
+            "fileId": null
+          }
+        ]
+      },
+      "pendingPostulacion": {},
+      "lastExecId": {
+        "8298437242": "14166"
+      },
+      "voiceMode": {
+        "8298437242": false
+      },
+      "pendingEmail": {
+        "8298437242": {
+          "to": "simon.ariel2099@gmail.com",
+          "subject": "Presentación Profesional - Simón Marín Rojas",
+          "body": "Estimado equipo de selección,\n\nSoy Simón Marín Rojas, Ingeniero Comercial especializado en procesos y automatización, y les escribo para presentar mi candidatura a roles de Especialista en Automatización, Analista de Procesos o cargos de transformación digital.\n\nEn mi gestión como Analista de Procesos y Sistemas en Bioproterra, logré automatizar más del 75% de los flujos operativos clave mediante n8n y Google Apps Script, implementé un ERP completo desde cero en Notion para centralizar la gestión de la empresa, y administro mi propio VPS para garantizar la estabilidad de soluciones críticas. Estas iniciativas permitieron escalar la capacidad operativa sin aumentar costos fijos.\n\nCuento con disponibilidad inmediata para incorporarme y estoy listo para analizar sus necesidades actuales de optimización. Quedo atento a su respuesta para coordinar una reunión.\n\nSaludos cordiales,",
+          "chatId": "8298437242",
+          "timestamp": 1775459110336
+        }
+      },
+      "userMemory": {}
+    }
+  },
+  "meta": null,
+  "pinData": {},
+  "versionId": "b67536f7-c3cf-4862-9ed3-a6bb10d22f68",
+  "activeVersionId": "b67536f7-c3cf-4862-9ed3-a6bb10d22f68",
+  "versionCounter": 538,
+  "triggerCount": 1,
+  "tags": []
+}
