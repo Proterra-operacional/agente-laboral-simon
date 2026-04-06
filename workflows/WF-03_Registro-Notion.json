@@ -2,60 +2,33 @@
   "id": "N4o9iXc8PyCf0325",
   "name": "WF-03 Registro en Notion",
   "active": true,
-  "isArchived": false,
+  "description": "Webhook receptor de postulaciones confirmadas - registra en Notion y notifica via Telegram",
+  "updatedAt": "2026-04-06T06:24:28.736Z",
   "nodes": [
     {
       "id": "wf3-n1",
       "name": "Webhook: postulacion confirmada",
       "type": "n8n-nodes-base.webhook",
-      "typeVersion": 2,
-      "position": [
-        240,
-        304
-      ],
-      "webhookId": "smr-registrar-wh",
       "parameters": {
         "httpMethod": "POST",
-        "path": "registrar-postulacion",
-        "options": {}
+        "path": "registrar-postulacion"
       }
     },
     {
       "id": "wf3-prep",
       "name": "Preparar datos",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        460,
-        304
-      ],
-      "parameters": {
-        "mode": "runOnceForAllItems",
-        "jsCode": "const b = ($input.first().json.body) || $input.first().json;\nconst score = Number(b.score) || 0;\nreturn [{ json: { chatId: b.chatId||'', jobTitle: b.jobTitle||b.cargo||'Sin titulo', company: b.company||b.empresa||'', portal: b.portal||'email', jobUrl: b.jobUrl||b.link||b.url||'', recipientEmail: b.recipientEmail||b.email||'', emailBody: b.emailBody||b.observaciones||'', emailSubject: b.emailSubject||b.subject||'', score, metodo: b.metodo||'Email directo', region: b.region||'R.M', notas: b.notas||b.observaciones||'', recordType: b.recordType||'postulacion', fecha: new Date().toISOString().split('T')[0] }}];"
-      }
+      "type": "n8n-nodes-base.code"
     },
     {
       "id": "wf3-n2",
       "name": "Crear en Notion API",
       "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        700,
-        304
-      ],
       "parameters": {
         "method": "POST",
-        "url": "https://api.notion.com/v1/pages",
-        "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "notionApi",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ parent: { database_id: '2d03b76e-193b-8087-83c6-fae54ef2fe08' }, properties: { 'Nombre': { title: [{ type: 'text', text: { content: $json.jobTitle } }] }, 'Estado': { status: { name: '📤 Enviada' } }, 'Fecha de postulación': { date: { start: $json.fecha } } } }) }}",
-        "options": {}
+        "url": "https://api.notion.com/v1/pages"
       },
       "credentials": {
         "notionApi": {
-          "id": "jYJowf8nddngCyk0",
           "name": "Notion - Agente Laboral"
         }
       }
@@ -64,60 +37,11 @@
       "id": "wf3-n3",
       "name": "Notificar exito a Telegram",
       "type": "n8n-nodes-base.telegram",
-      "typeVersion": 1.2,
-      "position": [
-        940,
-        304
-      ],
-      "parameters": {
-        "chatId": "={{ $('Preparar datos').first().json.chatId || '8298437242' }}",
-        "text": "=Registrado en Notion\nCargo: {{ $('Preparar datos').first().json.jobTitle }}",
-        "additionalFields": {
-          "appendAttribution": false
-        }
-      },
       "credentials": {
         "telegramApi": {
-          "id": "rE6bL40aCajtjgBJ",
           "name": "Telegram Bot - SMR Job Agent"
         }
       }
     }
-  ],
-  "connections": {
-    "Webhook: postulacion confirmada": {
-      "main": [
-        [
-          {
-            "node": "Preparar datos",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Preparar datos": {
-      "main": [
-        [
-          {
-            "node": "Crear en Notion API",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Crear en Notion API": {
-      "main": [
-        [
-          {
-            "node": "Notificar exito a Telegram",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    }
-  },
-  "updatedAt": "2026-04-06T06:24:28.736Z"
+  ]
 }
