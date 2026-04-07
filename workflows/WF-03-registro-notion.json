@@ -1,0 +1,327 @@
+{
+  "updatedAt": "2026-04-06T06:24:28.736Z",
+  "createdAt": "2026-03-25T20:29:32.474Z",
+  "id": "N4o9iXc8PyCf0325",
+  "name": "WF-03 Registro en Notion",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "id": "wf3-n1",
+      "name": "Webhook: postulacion confirmada",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        304
+      ],
+      "webhookId": "smr-registrar-wh",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "registrar-postulacion",
+        "options": {}
+      }
+    },
+    {
+      "id": "wf3-prep",
+      "name": "Preparar datos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        304
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const b = ($input.first().json.body) || $input.first().json;\nconst score = Number(b.score) || 0;\nconst prioridad = b.prioridad || (score >= 8 ? 'Alta' : score >= 5 ? 'Media' : 'Baja');\nconst probabilidad = b.probabilidad || (score >= 8 ? 'Alta' : score >= 5 ? 'Media' : 'Baja');\nconst recordType = b.recordType || 'postulacion';\nconst iconUrl = recordType === 'email' \n  ? 'http://simonmarin.com/wp-content/uploads/2026/04/Correo-enviado.svg'\n  : 'http://simonmarin.com/wp-content/uploads/2026/04/Busqueda-laboral.svg';\nreturn [{ json: {\n  chatId: b.chatId || '',\n  jobTitle: b.jobTitle || b.cargo || 'Sin titulo',\n  company: b.company || b.empresa || '',\n  portal: b.portal || 'email',\n  jobUrl: b.jobUrl || b.link || b.url || '',\n  recipientEmail: b.recipientEmail || b.email || '',\n  emailBody: b.emailBody || b.observaciones || '',\n  emailSubject: b.emailSubject || b.subject || '',\n  score: score,\n  metodo: b.metodo || 'Email directo',\n  region: b.region || 'R.M',\n  notas: b.notas || b.observaciones || '',\n  prioridad: prioridad,\n  probabilidad: probabilidad,\n  recordType: recordType,\n  iconUrl: iconUrl,\n  fecha: new Date().toISOString().split('T')[0]\n}}];"
+      }
+    },
+    {
+      "id": "wf3-n2",
+      "name": "Crear en Notion API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        700,
+        304
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/pages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "notionApi",
+        "sendHeaders": false,
+        "headerParameters": {
+          "parameters": []
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": {
+          "=": "={ \"parent\": { \"database_id\": \"2d03b76e-193b-8087-83c6-fae54ef2fe08\" }, \"properties\": { \"Nombre\": { \"title\": [{ \"type\": \"text\", \"text\": { \"content\": \"{{ $json.jobTitle }}\" } }] }, \"Estado\": { \"status\": { \"name\": \"\\ud83d\\udce4 Enviada\" } }, \"Fecha de postulaci\\u00f3n\": { \"date\": { \"start\": \"{{ $json.fecha }}\" } }, \"Link\\ud83d\\udd39\": { \"url\": \"{{ $json.jobUrl || null }}\" }, \"Correo\": { \"email\": \"{{ $json.recipientEmail || null }}\" }, \"Regi\\u00f3n\": { \"select\": { \"name\": \"{{ $json.region }}\" } }, \"Observaciones\": { \"rich_text\": [{ \"type\": \"text\", \"text\": { \"content\": \"Empresa: {{ $json.company }} | Portal: {{ $json.portal }} | Score: {{ $json.score }}/10 | Metodo: {{ $json.metodo }}{{ $json.notas ? ' | ' + $json.notas : '' }}\" } }] } } }"
+        },
+        "options": {},
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ \n  parent: { database_id: '2d03b76e-193b-8087-83c6-fae54ef2fe08' }, \n  icon: { type: 'external', external: { url: $json.iconUrl } }, \n  properties: { \n    'Nombre': { title: [{ type: 'text', text: { content: $json.jobTitle } }] }, \n    'Estado': { status: { name: '📤 Enviada' } }, \n    'Fecha de postulación': { date: { start: $json.fecha } }, \n    'Link🔹': { url: $json.jobUrl || null }, \n    'Correo persona': { email: $json.recipientEmail || null }, \n    'Región': { select: { name: $json.region || 'R.M' } }, \n    'Asunto del correo': { rich_text: [{ type: 'text', text: { content: ($json.emailSubject || '').slice(0,2000) } }] }, \n    'Cuerpo del correo': { rich_text: [{ type: 'text', text: { content: ($json.emailBody || '').slice(0,2000) } }] }, \n    'Observaciones': { rich_text: [{ type: 'text', text: { content: ('Empresa: ' + ($json.company || '-') + ' | Portal: ' + ($json.portal || '-') + ' | Método: ' + ($json.metodo || '-')).slice(0,2000) } }] } \n  } \n}) }}"
+      },
+      "credentials": {
+        "notionApi": {
+          "id": "jYJowf8nddngCyk0",
+          "name": "Notion - Agente Laboral"
+        }
+      }
+    },
+    {
+      "id": "wf3-n3",
+      "name": "Notificar exito a Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        940,
+        304
+      ],
+      "parameters": {
+        "chatId": "={{ $('Preparar datos').first().json.chatId || '8298437242' }}",
+        "text": "=Registrado en Notion\nCargo: {{ $('Preparar datos').first().json.jobTitle }}\nEmpresa: {{ $('Preparar datos').first().json.company }}\nScore: {{ $('Preparar datos').first().json.score }}/10",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "rE6bL40aCajtjgBJ",
+          "name": "Telegram Bot - SMR Job Agent"
+        }
+      },
+      "webhookId": "39718bfe-1697-40a6-99f3-4e536cd1cfc6"
+    }
+  ],
+  "connections": {
+    "Webhook: postulacion confirmada": {
+      "main": [
+        [
+          {
+            "node": "Preparar datos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar datos": {
+      "main": [
+        [
+          {
+            "node": "Crear en Notion API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Crear en Notion API": {
+      "main": [
+        [
+          {
+            "node": "Notificar exito a Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false,
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "I3orjxloJLGwQYj4",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all"
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "pinData": {},
+  "versionId": "a2183eca-8a67-4333-92be-53cc21e6d573",
+  "activeVersionId": "a2183eca-8a67-4333-92be-53cc21e6d573",
+  "versionCounter": 50,
+  "triggerCount": 1,
+  "shared": [
+    {
+      "updatedAt": "2026-03-25T20:30:34.022Z",
+      "createdAt": "2026-03-25T20:30:34.022Z",
+      "role": "workflow:owner",
+      "workflowId": "N4o9iXc8PyCf0325",
+      "projectId": "4s8UyPx8dbNLZbPq",
+      "project": {
+        "updatedAt": "2025-10-05T16:09:00.726Z",
+        "createdAt": "2025-10-05T16:02:04.834Z",
+        "id": "4s8UyPx8dbNLZbPq",
+        "name": "Proterra Constructora <operacional@bioproterra.cl>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "creatorId": "ea31d4b3-ce56-4b92-8bc8-04d17a093ead"
+      }
+    }
+  ],
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-04-06T06:24:28.738Z",
+    "createdAt": "2026-04-06T06:24:28.738Z",
+    "versionId": "a2183eca-8a67-4333-92be-53cc21e6d573",
+    "workflowId": "N4o9iXc8PyCf0325",
+    "nodes": [
+      {
+        "id": "wf3-n1",
+        "name": "Webhook: postulacion confirmada",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          240,
+          304
+        ],
+        "webhookId": "smr-registrar-wh",
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "registrar-postulacion",
+          "options": {}
+        }
+      },
+      {
+        "id": "wf3-prep",
+        "name": "Preparar datos",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          460,
+          304
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "const b = ($input.first().json.body) || $input.first().json;\nconst score = Number(b.score) || 0;\nconst prioridad = b.prioridad || (score >= 8 ? 'Alta' : score >= 5 ? 'Media' : 'Baja');\nconst probabilidad = b.probabilidad || (score >= 8 ? 'Alta' : score >= 5 ? 'Media' : 'Baja');\nconst recordType = b.recordType || 'postulacion';\nconst iconUrl = recordType === 'email' \n  ? 'http://simonmarin.com/wp-content/uploads/2026/04/Correo-enviado.svg'\n  : 'http://simonmarin.com/wp-content/uploads/2026/04/Busqueda-laboral.svg';\nreturn [{ json: {\n  chatId: b.chatId || '',\n  jobTitle: b.jobTitle || b.cargo || 'Sin titulo',\n  company: b.company || b.empresa || '',\n  portal: b.portal || 'email',\n  jobUrl: b.jobUrl || b.link || b.url || '',\n  recipientEmail: b.recipientEmail || b.email || '',\n  emailBody: b.emailBody || b.observaciones || '',\n  emailSubject: b.emailSubject || b.subject || '',\n  score: score,\n  metodo: b.metodo || 'Email directo',\n  region: b.region || 'R.M',\n  notas: b.notas || b.observaciones || '',\n  prioridad: prioridad,\n  probabilidad: probabilidad,\n  recordType: recordType,\n  iconUrl: iconUrl,\n  fecha: new Date().toISOString().split('T')[0]\n}}];"
+        }
+      },
+      {
+        "id": "wf3-n2",
+        "name": "Crear en Notion API",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          700,
+          304
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.notion.com/v1/pages",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "notionApi",
+          "sendHeaders": false,
+          "headerParameters": {
+            "parameters": []
+          },
+          "sendBody": true,
+          "contentType": "json",
+          "body": {
+            "=": "={ \"parent\": { \"database_id\": \"2d03b76e-193b-8087-83c6-fae54ef2fe08\" }, \"properties\": { \"Nombre\": { \"title\": [{ \"type\": \"text\", \"text\": { \"content\": \"{{ $json.jobTitle }}\" } }] }, \"Estado\": { \"status\": { \"name\": \"\\ud83d\\udce4 Enviada\" } }, \"Fecha de postulaci\\u00f3n\": { \"date\": { \"start\": \"{{ $json.fecha }}\" } }, \"Link\\ud83d\\udd39\": { \"url\": \"{{ $json.jobUrl || null }}\" }, \"Correo\": { \"email\": \"{{ $json.recipientEmail || null }}\" }, \"Regi\\u00f3n\": { \"select\": { \"name\": \"{{ $json.region }}\" } }, \"Observaciones\": { \"rich_text\": [{ \"type\": \"text\", \"text\": { \"content\": \"Empresa: {{ $json.company }} | Portal: {{ $json.portal }} | Score: {{ $json.score }}/10 | Metodo: {{ $json.metodo }}{{ $json.notas ? ' | ' + $json.notas : '' }}\" } }] } } }"
+          },
+          "options": {},
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ \n  parent: { database_id: '2d03b76e-193b-8087-83c6-fae54ef2fe08' }, \n  icon: { type: 'external', external: { url: $json.iconUrl } }, \n  properties: { \n    'Nombre': { title: [{ type: 'text', text: { content: $json.jobTitle } }] }, \n    'Estado': { status: { name: '📤 Enviada' } }, \n    'Fecha de postulación': { date: { start: $json.fecha } }, \n    'Link🔹': { url: $json.jobUrl || null }, \n    'Correo persona': { email: $json.recipientEmail || null }, \n    'Región': { select: { name: $json.region || 'R.M' } }, \n    'Asunto del correo': { rich_text: [{ type: 'text', text: { content: ($json.emailSubject || '').slice(0,2000) } }] }, \n    'Cuerpo del correo': { rich_text: [{ type: 'text', text: { content: ($json.emailBody || '').slice(0,2000) } }] }, \n    'Observaciones': { rich_text: [{ type: 'text', text: { content: ('Empresa: ' + ($json.company || '-') + ' | Portal: ' + ($json.portal || '-') + ' | Método: ' + ($json.metodo || '-')).slice(0,2000) } }] } \n  } \n}) }}"
+        },
+        "credentials": {
+          "notionApi": {
+            "id": "jYJowf8nddngCyk0",
+            "name": "Notion - Agente Laboral"
+          }
+        }
+      },
+      {
+        "id": "wf3-n3",
+        "name": "Notificar exito a Telegram",
+        "type": "n8n-nodes-base.telegram",
+        "typeVersion": 1.2,
+        "position": [
+          940,
+          304
+        ],
+        "parameters": {
+          "chatId": "={{ $('Preparar datos').first().json.chatId || '8298437242' }}",
+          "text": "=Registrado en Notion\nCargo: {{ $('Preparar datos').first().json.jobTitle }}\nEmpresa: {{ $('Preparar datos').first().json.company }}\nScore: {{ $('Preparar datos').first().json.score }}/10",
+          "additionalFields": {
+            "appendAttribution": false
+          }
+        },
+        "credentials": {
+          "telegramApi": {
+            "id": "rE6bL40aCajtjgBJ",
+            "name": "Telegram Bot - SMR Job Agent"
+          }
+        },
+        "webhookId": "39718bfe-1697-40a6-99f3-4e536cd1cfc6"
+      }
+    ],
+    "connections": {
+      "Webhook: postulacion confirmada": {
+        "main": [
+          [
+            {
+              "node": "Preparar datos",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Preparar datos": {
+        "main": [
+          [
+            {
+              "node": "Crear en Notion API",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Crear en Notion API": {
+        "main": [
+          [
+            {
+              "node": "Notificar exito a Telegram",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "Proterra Constructora",
+    "name": null,
+    "description": null,
+    "autosaved": false,
+    "workflowPublishHistory": [
+      {
+        "createdAt": "2026-04-06T06:24:28.860Z",
+        "id": 908,
+        "workflowId": "N4o9iXc8PyCf0325",
+        "versionId": "a2183eca-8a67-4333-92be-53cc21e6d573",
+        "event": "activated",
+        "userId": "ea31d4b3-ce56-4b92-8bc8-04d17a093ead"
+      },
+      {
+        "createdAt": "2026-04-06T06:24:28.827Z",
+        "id": 907,
+        "workflowId": "N4o9iXc8PyCf0325",
+        "versionId": "a2183eca-8a67-4333-92be-53cc21e6d573",
+        "event": "deactivated",
+        "userId": "ea31d4b3-ce56-4b92-8bc8-04d17a093ead"
+      }
+    ]
+  }
+}
