@@ -1,0 +1,373 @@
+{
+  "updatedAt": "2026-04-05T16:50:40.376Z",
+  "createdAt": "2026-03-25T20:29:32.843Z",
+  "id": "KAXHj5q99YyM2b2w",
+  "name": "WF-05 Seguimiento Semanal",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 10 * * 4"
+            }
+          ]
+        }
+      },
+      "id": "wf4-n1",
+      "name": "Trigger jueves 10:00 AM",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "getAll",
+        "databaseId": {
+          "__rl": true,
+          "value": "2d03b76e-193b-8087-83c6-fae54ef2fe08",
+          "mode": "id"
+        },
+        "limit": 100,
+        "options": {}
+      },
+      "id": "wf4-n2",
+      "name": "Consultar Notion",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        464,
+        304
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": "jYJowf8nddngCyk0",
+          "name": "Notion - Agente Laboral"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items=$input.all();\nconst today=new Date();\n\n// Clasificar estados\nconst COMPLETADOS=['Conseguida','Cerrada','Rechazada','Solicitud perdida','Retirada'];\nconst PENDIENTE=['Enviada','Sin respuesta','Requiere mi acción'];\nconst EN_PROGRESO=['CV Visto','Primer contacto','Primera llamada','Próximo a reunión','En contacto','Reunión agendada','Esperando decisión'];\n\nconst grupos={};\nconst necesitanAccion=[];\nconst sinRespuesta30=[];\nconst sincerrar=[];\n\nlet activas=0, completadas=0, sinEstado=0;\n\nfor(const item of items){\n  const p=item.json.properties||{};\n  const estadoRaw=p['Estado']?.status?.name||'';\n  const nombre=(p['Nombre']?.title||[]).map(t=>t.plain_text).join('')||'Sin nombre';\n  const empresa=(p['Empresa🔸']?.rich_text||[]).map(t=>t.plain_text).join('')||'';\n  const fechaPost=p['Fecha de postulación']?.date?.start;\n  const diasTranscurridos=fechaPost?Math.floor((today-new Date(fechaPost))/86400000):null;\n  \n  // Normalizar estado (quitar emojis al inicio)\n  const estado=estadoRaw.replace(/^[^a-zA-ZáéíóúÁÉÍÓÚ]+/,'').trim();\n  \n  if(!estadoRaw){sinEstado++;continue;}\n  if(COMPLETADOS.some(c=>estadoRaw.includes(c))){completadas++;continue;}\n  \n  activas++;\n  if(!grupos[estadoRaw])grupos[estadoRaw]=[];\n  grupos[estadoRaw].push({nombre,empresa,dias:diasTranscurridos});\n  \n  if(estadoRaw.includes('Requiere mi acción'))necesitanAccion.push('  • '+nombre+(empresa?' — '+empresa:''));\n  if((estadoRaw.includes('Enviada')||estadoRaw.includes('Sin respuesta'))&&diasTranscurridos>=7){\n    sinRespuesta30.push('  • '+nombre+(empresa?' — '+empresa:'')+' ('+diasTranscurridos+' días)');\n  }\n  if(diasTranscurridos>=30&&(estadoRaw.includes('Enviada')||estadoRaw.includes('Sin respuesta'))){\n    sincerrar.push('  • '+nombre+(empresa?' — '+empresa:'')+' ('+diasTranscurridos+' días — VENCIDA)');\n  }\n}\n\nlet r='📊 *Reporte Semanal — '+today.toLocaleDateString('es-CL',{weekday:'long',day:'numeric',month:'long'})+'*\\n\\n';\nr+='📌 *Activas: '+activas+'* | ✅ Completadas: '+completadas;\nif(sinEstado)r+=' | _('+sinEstado+' sin categorizar)_';\nr+='\\n\\n*Por estado:*\\n';\nfor(const[e,lista]of Object.entries(grupos)){r+=e+': '+lista.length+'\\n';}\n\nif(necesitanAccion.length)r+='\\n🚨 *Requieren tu acción:*\\n'+necesitanAccion.join('\\n')+'\\n';\nif(sinRespuesta30.length)r+='\\n⏰ *Sin respuesta +7 días:*\\n'+sinRespuesta30.join('\\n')+'\\n';\nif(sincerrar.length)r+='\\n🗄️ *Candidatas a cerrar (+30 días):*\\n'+sincerrar.join('\\n')+'\\n_(Di \"cerrar vencidas\" al agente para confirmar)_\\n';\nif(!necesitanAccion.length&&!sinRespuesta30.length&&!sincerrar.length)r+='\\n✨ Todo en orden, sin acciones pendientes.';\n\nr+='\\n\\n🔗 [Ver en Notion](https://notion.so/2d03b76e193b808783c6fae54ef2fe08)';\nreturn[{json:{report:r}}];"
+      },
+      "id": "wf4-n3",
+      "name": "Generar reporte semanal",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        688,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "8298437242",
+        "text": "={{ $json.report }}",
+        "additionalFields": {
+          "disable_web_page_preview": true,
+          "parse_mode": "Markdown",
+          "appendAttribution": false
+        }
+      },
+      "id": "wf4-n4",
+      "name": "Enviar reporte Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        912,
+        304
+      ],
+      "webhookId": "93ded7c7-864c-4f99-a0c2-ba4a1775d7ec",
+      "credentials": {
+        "telegramApi": {
+          "id": "rE6bL40aCajtjgBJ",
+          "name": "Telegram Bot - SMR Job Agent"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Trigger jueves 10:00 AM": {
+      "main": [
+        [
+          {
+            "node": "Consultar Notion",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consultar Notion": {
+      "main": [
+        [
+          {
+            "node": "Generar reporte semanal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generar reporte semanal": {
+      "main": [
+        [
+          {
+            "node": "Enviar reporte Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false,
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "I3orjxloJLGwQYj4"
+  },
+  "staticData": {
+    "node:Trigger jueves 10:00 AM": {
+      "recurrenceRules": []
+    }
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "pinData": {},
+  "versionId": "5e63d135-fe17-4749-9e7e-de27366a9037",
+  "activeVersionId": "5e63d135-fe17-4749-9e7e-de27366a9037",
+  "versionCounter": 28,
+  "triggerCount": 1,
+  "shared": [
+    {
+      "updatedAt": "2026-03-25T20:30:46.096Z",
+      "createdAt": "2026-03-25T20:30:46.096Z",
+      "role": "workflow:owner",
+      "workflowId": "KAXHj5q99YyM2b2w",
+      "projectId": "4s8UyPx8dbNLZbPq",
+      "project": {
+        "updatedAt": "2025-10-05T16:09:00.726Z",
+        "createdAt": "2025-10-05T16:02:04.834Z",
+        "id": "4s8UyPx8dbNLZbPq",
+        "name": "Proterra Constructora <operacional@bioproterra.cl>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "creatorId": "ea31d4b3-ce56-4b92-8bc8-04d17a093ead"
+      }
+    }
+  ],
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-04-05T00:23:37.000Z",
+    "createdAt": "2026-03-27T18:31:55.355Z",
+    "versionId": "5e63d135-fe17-4749-9e7e-de27366a9037",
+    "workflowId": "KAXHj5q99YyM2b2w",
+    "nodes": [
+      {
+        "parameters": {
+          "rule": {
+            "interval": [
+              {
+                "field": "cronExpression",
+                "expression": "0 10 * * 4"
+              }
+            ]
+          }
+        },
+        "id": "wf4-n1",
+        "name": "Trigger jueves 10:00 AM",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.2,
+        "position": [
+          240,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "resource": "databasePage",
+          "operation": "getAll",
+          "databaseId": {
+            "__rl": true,
+            "value": "2d03b76e-193b-8087-83c6-fae54ef2fe08",
+            "mode": "id"
+          },
+          "limit": 100,
+          "options": {}
+        },
+        "id": "wf4-n2",
+        "name": "Consultar Notion",
+        "type": "n8n-nodes-base.notion",
+        "typeVersion": 2.2,
+        "position": [
+          464,
+          304
+        ],
+        "credentials": {
+          "notionApi": {
+            "id": "jYJowf8nddngCyk0",
+            "name": "Notion - Agente Laboral"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsCode": "const items=$input.all();\nconst today=new Date();\n\n// Clasificar estados\nconst COMPLETADOS=['Conseguida','Cerrada','Rechazada','Solicitud perdida','Retirada'];\nconst PENDIENTE=['Enviada','Sin respuesta','Requiere mi acción'];\nconst EN_PROGRESO=['CV Visto','Primer contacto','Primera llamada','Próximo a reunión','En contacto','Reunión agendada','Esperando decisión'];\n\nconst grupos={};\nconst necesitanAccion=[];\nconst sinRespuesta30=[];\nconst sincerrar=[];\n\nlet activas=0, completadas=0, sinEstado=0;\n\nfor(const item of items){\n  const p=item.json.properties||{};\n  const estadoRaw=p['Estado']?.status?.name||'';\n  const nombre=(p['Nombre']?.title||[]).map(t=>t.plain_text).join('')||'Sin nombre';\n  const empresa=(p['Empresa🔸']?.rich_text||[]).map(t=>t.plain_text).join('')||'';\n  const fechaPost=p['Fecha de postulación']?.date?.start;\n  const diasTranscurridos=fechaPost?Math.floor((today-new Date(fechaPost))/86400000):null;\n  \n  // Normalizar estado (quitar emojis al inicio)\n  const estado=estadoRaw.replace(/^[^a-zA-ZáéíóúÁÉÍÓÚ]+/,'').trim();\n  \n  if(!estadoRaw){sinEstado++;continue;}\n  if(COMPLETADOS.some(c=>estadoRaw.includes(c))){completadas++;continue;}\n  \n  activas++;\n  if(!grupos[estadoRaw])grupos[estadoRaw]=[];\n  grupos[estadoRaw].push({nombre,empresa,dias:diasTranscurridos});\n  \n  if(estadoRaw.includes('Requiere mi acción'))necesitanAccion.push('  • '+nombre+(empresa?' — '+empresa:''));\n  if((estadoRaw.includes('Enviada')||estadoRaw.includes('Sin respuesta'))&&diasTranscurridos>=7){\n    sinRespuesta30.push('  • '+nombre+(empresa?' — '+empresa:'')+' ('+diasTranscurridos+' días)');\n  }\n  if(diasTranscurridos>=30&&(estadoRaw.includes('Enviada')||estadoRaw.includes('Sin respuesta'))){\n    sincerrar.push('  • '+nombre+(empresa?' — '+empresa:'')+' ('+diasTranscurridos+' días — VENCIDA)');\n  }\n}\n\nlet r='📊 *Reporte Semanal — '+today.toLocaleDateString('es-CL',{weekday:'long',day:'numeric',month:'long'})+'*\\n\\n';\nr+='📌 *Activas: '+activas+'* | ✅ Completadas: '+completadas;\nif(sinEstado)r+=' | _('+sinEstado+' sin categorizar)_';\nr+='\\n\\n*Por estado:*\\n';\nfor(const[e,lista]of Object.entries(grupos)){r+=e+': '+lista.length+'\\n';}\n\nif(necesitanAccion.length)r+='\\n🚨 *Requieren tu acción:*\\n'+necesitanAccion.join('\\n')+'\\n';\nif(sinRespuesta30.length)r+='\\n⏰ *Sin respuesta +7 días:*\\n'+sinRespuesta30.join('\\n')+'\\n';\nif(sincerrar.length)r+='\\n🗄️ *Candidatas a cerrar (+30 días):*\\n'+sincerrar.join('\\n')+'\\n_(Di \"cerrar vencidas\" al agente para confirmar)_\\n';\nif(!necesitanAccion.length&&!sinRespuesta30.length&&!sincerrar.length)r+='\\n✨ Todo en orden, sin acciones pendientes.';\n\nr+='\\n\\n🔗 [Ver en Notion](https://notion.so/2d03b76e193b808783c6fae54ef2fe08)';\nreturn[{json:{report:r}}];"
+        },
+        "id": "wf4-n3",
+        "name": "Generar reporte semanal",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          688,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "chatId": "8298437242",
+          "text": "={{ $json.report }}",
+          "additionalFields": {
+            "disable_web_page_preview": true,
+            "parse_mode": "Markdown",
+            "appendAttribution": false
+          }
+        },
+        "id": "wf4-n4",
+        "name": "Enviar reporte Telegram",
+        "type": "n8n-nodes-base.telegram",
+        "typeVersion": 1.2,
+        "position": [
+          912,
+          304
+        ],
+        "webhookId": "93ded7c7-864c-4f99-a0c2-ba4a1775d7ec",
+        "credentials": {
+          "telegramApi": {
+            "id": "rE6bL40aCajtjgBJ",
+            "name": "Telegram Bot - SMR Job Agent"
+          }
+        }
+      }
+    ],
+    "connections": {
+      "Trigger jueves 10:00 AM": {
+        "main": [
+          [
+            {
+              "node": "Consultar Notion",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Consultar Notion": {
+        "main": [
+          [
+            {
+              "node": "Generar reporte semanal",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Generar reporte semanal": {
+        "main": [
+          [
+            {
+              "node": "Enviar reporte Telegram",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "Proterra Constructora",
+    "name": "Version 5e63d135",
+    "description": "",
+    "autosaved": false,
+    "workflowPublishHistory": [
+      {
+        "createdAt": "2026-03-27T18:31:55.437Z",
+        "id": 497,
+        "workflowId": "KAXHj5q99YyM2b2w",
+        "versionId": "5e63d135-fe17-4749-9e7e-de27366a9037",
+        "event": "activated",
+        "userId": "ea31d4b3-ce56-4b92-8bc8-04d17a093ead"
+      },
+      {
+        "createdAt": "2026-04-05T00:23:37.008Z",
+        "id": 717,
+        "workflowId": "KAXHj5q99YyM2b2w",
+        "versionId": "5e63d135-fe17-4749-9e7e-de27366a9037",
+        "event": "activated",
+        "userId": "ea31d4b3-ce56-4b92-8bc8-04d17a093ead"
+      },
+      {
+        "createdAt": "2026-04-05T00:31:41.902Z",
+        "id": 721,
+        "workflowId": "KAXHj5q99YyM2b2w",
+        "versionId": "5e63d135-fe17-4749-9e7e-de27366a9037",
+        "event": "activated",
+        "userId": "ea31d4b3-ce56-4b92-8bc8-04d17a093ead"
+      },
+      {
+        "createdAt": "2026-04-05T16:50:40.457Z",
+        "id": 820,
+        "workflowId": "KAXHj5q99YyM2b2w",
+        "versionId": "5e63d135-fe17-4749-9e7e-de27366a9037",
+        "event": "activated",
+        "userId": "ea31d4b3-ce56-4b92-8bc8-04d17a093ead"
+      },
+      {
+        "createdAt": "2026-03-27T18:31:55.414Z",
+        "id": 496,
+        "workflowId": "KAXHj5q99YyM2b2w",
+        "versionId": "5e63d135-fe17-4749-9e7e-de27366a9037",
+        "event": "deactivated",
+        "userId": "ea31d4b3-ce56-4b92-8bc8-04d17a093ead"
+      },
+      {
+        "createdAt": "2026-04-03T03:13:23.264Z",
+        "id": 706,
+        "workflowId": "KAXHj5q99YyM2b2w",
+        "versionId": "5e63d135-fe17-4749-9e7e-de27366a9037",
+        "event": "deactivated",
+        "userId": "ea31d4b3-ce56-4b92-8bc8-04d17a093ead"
+      },
+      {
+        "createdAt": "2026-04-05T00:31:41.876Z",
+        "id": 720,
+        "workflowId": "KAXHj5q99YyM2b2w",
+        "versionId": "5e63d135-fe17-4749-9e7e-de27366a9037",
+        "event": "deactivated",
+        "userId": "ea31d4b3-ce56-4b92-8bc8-04d17a093ead"
+      },
+      {
+        "createdAt": "2026-04-05T16:50:40.429Z",
+        "id": 819,
+        "workflowId": "KAXHj5q99YyM2b2w",
+        "versionId": "5e63d135-fe17-4749-9e7e-de27366a9037",
+        "event": "deactivated",
+        "userId": "ea31d4b3-ce56-4b92-8bc8-04d17a093ead"
+      }
+    ]
+  }
+}
